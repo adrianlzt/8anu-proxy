@@ -79,3 +79,25 @@ def test_preferencias_cambian_la_puntuacion():
     cold = cond.build(CRAG, [], _weather(temp=5), ASPECT, cond.Prefs(12, 22), now=datetime(2026, 11, 15, 9))
     fine = cond.build(CRAG, [], _weather(temp=5), ASPECT, cond.Prefs(0, 10), now=datetime(2026, 11, 15, 9))
     assert fine["days"][1]["score"] > cold["days"][1]["score"]
+
+
+def test_viento_efectivo_segun_orientacion():
+    face, _ = cond.effective_wind(20, 30, 180, 180)  # viento del sur contra una pared al sur
+    back, _ = cond.effective_wind(20, 30, 0, 180)  # del norte: la pared queda a sotavento
+    assert face == 20 and back < 8
+
+
+def test_condensacion_con_roca_fria_y_aire_humedo():
+    w = _weather(temp=8, rh=98)
+    w["hourly"]["dew_point_2m"] = [7.8] * len(w["hourly"]["time"])
+    w["hourly"]["cloud_cover"] = [0] * len(w["hourly"]["time"])
+    d = cond.build(CRAG, [], w, {**ASPECT, "deg": 0}, cond.Prefs(4, 14), now=datetime(2026, 11, 15, 9))
+    morning = [h for h in d["hours"] if h["time"].startswith("2026-11-15T0")]
+    assert any(h["condensing"] for h in morning)
+    assert all(h["f"]["condensation"] < 1 for h in morning if h["condensing"])
+
+
+def test_ventana_vale_su_peor_hora():
+    hours = [{"day": True, "score": s} for s in (90, 90, 30, 70, 70, 70)]
+    a, b, low = cond.best_window(hours)
+    assert (a, b, low) == (3, 6, 70)

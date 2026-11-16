@@ -14,8 +14,8 @@
 
   function prefs() {
     try {
-      return Object.assign({ tmin: 12, tmax: 22, units: "metric" }, JSON.parse(localStorage.getItem(PREFS_KEY) || "{}"));
-    } catch (e) { return { tmin: 12, tmax: 22, units: "metric" }; }
+      return Object.assign({ tmin: 12, tmax: 22, units: "metric", style: "sport" }, JSON.parse(localStorage.getItem(PREFS_KEY) || "{}"));
+    } catch (e) { return { tmin: 12, tmax: 22, units: "metric", style: "sport" }; }
   }
   function savePrefs(p) { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); }
 
@@ -354,7 +354,13 @@
     const rcls = w.rock.state === "Dry" ? "nuc-green" : "nuc-red";
     const mapped = d.crag.sectors.filter((z) => z.aspect != null).length;
     const src = a.source === "user" ? "set by you" : `estimated from the terrain (slope ${a.slope}°), may be wrong`;
-    return `<section class="nuc-card"><div class="nuc-pad"><h2>Why these conditions?</h2></div><div class="nuc-pad nuc-why">
+    const fcls = (v) => (v >= 0.95 ? "great" : v >= 0.8 ? "good" : v >= 0.6 ? "ok" : "bad");
+    const bars = (w.factors || []).map((f) => `<div class="nuc-factor"><div class="nuc-row"><b>${esc(f.label)}</b><small>${esc(f.text)}</small></div>
+      <div class="nuc-fbar"><span class="nuc-bg-${fcls(f.value)}" style="width:${Math.max(4, f.value * 100)}%"></span></div></div>`).join("");
+    const x = d.days[state.sel];
+    return `<section class="nuc-card"><div class="nuc-pad"><h2>Why these conditions?</h2>
+      <p class="nuc-muted">${x.window ? `During the best window (${x.window.from}–${x.window.to}), worst factors first. The day scores its weakest hour in that window: ${x.score}.` : "Over the daylight hours, worst factors first."}</p></div>
+      <div class="nuc-pad nuc-factors">${bars}</div><div class="nuc-pad nuc-why">
       <div><h3>Temperature</h3><b class="${tcls}">${esc(w.temperature.state)}</b>
         <p>${w.temperature.window != null ? `${T(w.temperature.window)} ${TU()} on the rock during the best window, ` : ""}${T(w.temperature.high)} ${TU()} at the day's high.</p>
         <p class="nuc-muted">Scores are tuned to ${T(p.tmin)} – ${T(p.tmax)} ${TU()}.</p></div>
@@ -362,19 +368,21 @@
       <div><h3>Sun</h3><b>${esc(w.sun.state)}</b><p>${w.sun.clear_hours} clear daylight hours.</p></div>
       <div><h3>Since the last rain</h3><b>${esc(w.rain.state)}</b><p>${w.rain.mm_3d} mm over the last 3 days.</p></div>
       </div><div class="nuc-pad"><p class="nuc-warn">⚠ Wall faces ${esc(a.compass)} (${Math.round(a.deg)}°), ${src}; ${mapped} of ${d.crag.sectors.length} sectors mapped${d.crag.rain_safe ? "; marked as climbable in the rain on 8a.nu" : ""}. Unmapped sectors may be shadier, wetter or windier.</p>
-      <p class="nuc-muted">Model: rules v1 (rock temperature, humidity, rain and drying, wind, sun on the wall), not fitted to ascents yet · forecast Open-Meteo, fetched ${esc(d.fetched || "")}</p></div></section>`;
+      <p class="nuc-muted">Model v2: rock temperature with thermal inertia, dew point and condensation, rain and drying for ${esc(d.crag.rock)}${d.crag.rock_known ? "" : " (assumed)"}${d.crag.rain_safe ? " in a sheltered crag" : ""}, wind at the wall from its direction, rain chance; not fitted to ascents yet · forecast Open-Meteo, fetched ${esc(d.fetched || "")}</p></div></section>`;
   }
 
   function prefsCard() {
     const p = prefs();
     if (state.editPrefs) {
       return `<section class="nuc-card"><div class="nuc-pad"><h2>Your preferences</h2></div><form class="nuc-pad nuc-form" data-form="prefs">
+        <label>Style <select name="style"><option value="sport" ${p.style !== "boulder" ? "selected" : ""}>Sport climbing</option><option value="boulder" ${p.style === "boulder" ? "selected" : ""}>Bouldering</option></select></label>
         <label>Ideal climbing temperature (°C) <span><input name="tmin" type="number" value="${p.tmin}" step="1"> – <input name="tmax" type="number" value="${p.tmax}" step="1"></span></label>
         <label>Measurement units <select name="units"><option value="metric" ${p.units === "metric" ? "selected" : ""}>°C and km/h</option><option value="imperial" ${p.units === "imperial" ? "selected" : ""}>°F and mph</option></select></label>
         <div class="nuc-actions"><button type="button" data-cancel="prefs">Cancel</button><button type="submit" class="primary">Save</button></div></form></section>`;
     }
     return `<section class="nuc-card"><div class="nuc-pad nuc-row"><h2>Your preferences</h2><a href="#" class="nuc-link" data-edit="prefs">✎ Edit</a></div>
-      <div class="nuc-pad"><div class="nuc-kv"><span>Ideal climbing temperature</span><b>${T(p.tmin)} – ${T(p.tmax)} ${TU()}</b></div>
+      <div class="nuc-pad"><div class="nuc-kv"><span>Style</span><b>${p.style === "boulder" ? "Bouldering" : "Sport climbing"}</b></div>
+      <div class="nuc-kv"><span>Ideal climbing temperature</span><b>${T(p.tmin)} – ${T(p.tmax)} ${TU()}</b></div>
       <div class="nuc-kv"><span>Measurement units</span><b>${p.units === "imperial" ? "°F and mph" : "°C and km/h"}</b></div></div></section>`;
   }
 
@@ -431,11 +439,17 @@
       if (!r.ok) alert("Not a valid URL"); else load(state.key);
     });
     const pf = root.querySelector('[data-form="prefs"]');
+    // Al cambiar de estilo se propone su rango: el bloque se escala con más frío (mejor fricción).
+    if (pf) pf.querySelector('[name="style"]').addEventListener("change", (e) => {
+      const [a, b] = e.target.value === "boulder" ? [4, 14] : [12, 22];
+      pf.querySelector('[name="tmin"]').value = a;
+      pf.querySelector('[name="tmax"]').value = b;
+    });
     if (pf) pf.addEventListener("submit", (e) => {
       e.preventDefault();
       const f = new FormData(pf), tmin = +f.get("tmin"), tmax = +f.get("tmax");
       if (!(tmax > tmin)) { alert("The maximum must be above the minimum"); return; }
-      savePrefs({ tmin, tmax, units: f.get("units") });
+      savePrefs({ tmin, tmax, units: f.get("units"), style: f.get("style") });
       state.editPrefs = false;
       load(state.key);
     });

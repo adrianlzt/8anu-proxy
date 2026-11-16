@@ -5,8 +5,8 @@ Open-Meteo (5 días pasados + 7 de previsión); orientación de la pared de lo q
 crag?») o, si no, estimada con el relieve (elevaciones de Open-Meteo alrededor de la escuela). El sol en la pared se
 calcula con la posición del sol (NOAA) y esa orientación.
 
-La puntuación (v1) son reglas, no un modelo ajustado: temperatura de la roca respecto al rango ideal del usuario,
-humedad, roca mojada (balance de lluvia y secado hora a hora), viento, sol en la pared y noche.
+La puntuación (v2, idea de SendScore) son reglas físicas aproximadas, no un modelo ajustado con ascensiones: ver
+«Puntuación (v2)» más abajo.
 """
 
 import math
@@ -16,8 +16,8 @@ from datetime import datetime, timedelta
 
 OPEN_METEO = "https://api.open-meteo.com/v1"
 HOURLY = (
-    "temperature_2m,relative_humidity_2m,precipitation,precipitation_probability,weather_code,cloud_cover,"
-    "wind_speed_10m,wind_direction_10m,is_day,shortwave_radiation"
+    "temperature_2m,relative_humidity_2m,dew_point_2m,precipitation,precipitation_probability,weather_code,"
+    "cloud_cover,wind_speed_10m,wind_gusts_10m,wind_direction_10m,is_day,shortwave_radiation"
 )
 WEATHER_TTL = 30 * 60
 CRAG_TTL = 24 * 3600
@@ -173,13 +173,46 @@ def fit_aspect(points: list[tuple[float, float]], elevations: list[float]) -> tu
     return aspect, slope
 
 
-# --- Puntuación ----------------------------------------------------------------------------------------------------
+# --- Puntuación (v2) ------------------------------------------------------------------------------------------------
+#
+# Por horas se simula la roca: temperatura con inercia (sol en la pared, aire, viento, enfriamiento de noche con cielo
+# despejado), humedad acumulada (lluvia según tipo de roca y abrigo, condensación si la roca está por debajo del punto
+# de rocío, secado por sol, viento y aire seco) y viento efectivo en la pared (dirección respecto a la orientación).
+# Cada factor da 0–1 y la puntuación es 100 × su producto. Un día vale lo que la peor hora de su mejor ventana de 3 h.
+
+# Tipo de roca → (cuánto la moja la lluvia, velocidad de secado). Valores aproximados: la arenisca absorbe y tarda,
+# el granito suelta el agua enseguida.
+ROCKS = {
+    "sandstone": (1.6, 0.55), "gritstone": (1.4, 0.7), "conglomerate": (1.2, 0.8), "limestone": (1.0, 1.0),
+    "dolomite": (1.0, 1.0), "gneiss": (0.7, 1.3), "basalt": (0.7, 1.2), "granite": (0.6, 1.4), "quartzite": (0.6, 1.3),
+}  # fmt: skip
 
 
 @dataclass
 class Prefs:
     tmin: float = 12
     tmax: float = 22
+
+
+@dataclass
+class Rock:
+    type: str = "limestone"
+    sheltered: bool = False  # «rainSafety» en 8a.nu: desplomes que apenas se mojan
+
+    @property
+    def absorb(self) -> float:
+        return ROCKS.get(self.type, ROCKS["limestone"])[0] * (0.35 if self.sheltered else 1.0)
+
+    @property
+    def drying(self) -> float:
+        return ROCKS.get(self.type, ROCKS["limestone"])[1]
+
+
+def dew_point(t: float, rh: float) -> float:
+    """Punto de rocío (fórmula de Magnus)."""
+    a, b = 17.62, 243.12
+    g = math.log(max(rh, 1) / 100) + a * t / (b + t)
+    return b * g / (a - g)
 
 
 def temp_score(t: float, p: Prefs) -> float:
@@ -196,52 +229,103 @@ def humidity_score(rh: float) -> float:
     return max(0.5, 1 - (rh - 55) / 30 * 0.25 - max(0, rh - 85) / 13 * 0.2)
 
 
-def wind_score(w: float) -> float:
-    if w <= 20:
-        return 1.0
-    return max(0.3, 1 - (w - 20) / 35)
+def effective_wind(wind: float, gust: float, wind_dir: float, aspect: float) -> tuple[float, float]:
+    """Viento que llega a la pared: entero si sopla de cara, un tercio si viene de detrás o de lado."""
+    exposure = 0.35 + 0.65 * max(0.0, math.cos(math.radians(wind_dir - aspect)))
+    return wind * exposure, gust * exposure
 
 
-def rock_temperature(t: float, sun_frac: float, cloud: float, wind: float) -> float:
-    """Temperatura «sentida» en la roca: el sol directo la calienta, el viento la enfría."""
-    return t + sun_frac * (1 - cloud / 100) * 7 - min(wind, 40) / 10
+def wind_score(eff: float, gust: float, rh: float) -> float:
+    """Una brisa ligera es lo ideal (seca la roca y el sudor); el aire quieto y húmedo es pegajoso; el viento fuerte y
+    las rachas penalizan."""
+    if eff < 3:
+        s = 0.92 if rh > 70 else 1.0
+    elif eff <= 18:
+        s = 1.0
+    else:
+        s = max(0.4, 1 - (eff - 18) / 17 * 0.4)
+    if gust > 45:
+        s *= max(0.6, 1 - (gust - 45) / 50)
+    return s
 
 
-def score_hours(hours: list[dict], p: Prefs, rain_safe: bool) -> None:
-    """Añade a cada hora: rock_t, wet (0…), rock (dry/damp/wet), score (0–100) y cat."""
+def wall_irradiance(rad: float | None, sun_frac: float, cloud: float) -> float:
+    """W/m² aproximados de sol directo en la pared: la radiación global de Open-Meteo, solo cuando el sol le da."""
+    return min(900.0, (rad or 0) * sun_frac * 1.3 * (1 - 0.5 * cloud / 100))
+
+
+def score_hours(hours: list[dict], p: Prefs, rock: Rock, aspect: float, now_idx: int = 0) -> None:
+    """Añade a cada hora: rock_t (roca), feels (sensación), comfort, dew, eff_wind, gust, irr, wet,
+    rock (dry/damp/wet), condensing, f (factores 0–1), score (0–100) y cat."""
     wet = 0.0
-    for h in hours:
+    rock_t = hours[0]["temp"] if hours else 0
+    for i, h in enumerate(hours):
+        t, rh, cloud = h["temp"], h["rh"], h["cloud"]
+        dew = h.get("dew")
+        if dew is None:
+            dew = dew_point(t, rh)
+        eff, gust = effective_wind(h["wind"], h.get("gust") or h["wind"] * 1.5, h["wind_dir"], aspect)
+        irr = wall_irradiance(h.get("rad"), h["sun"], cloud)
+        # Roca: tiende a una temperatura de equilibrio con unas 3 h de inercia.
+        night_cool = 0 if h["day"] else 2.5 * (1 - cloud / 100)
+        t_eq = t + irr / 55 - eff * 0.06 - night_cool
+        rock_t += (t_eq - rock_t) * 0.35
+        # Sensación: aire + sol en la piel + bochorno en días calurosos − viento.
+        muggy = max(0.0, (rh - 50) / 10 * 0.6) if t > 20 else 0.0
+        feels = t + irr / 90 + muggy - min(eff, 40) * 0.12
+        comfort = (feels + rock_t) / 2
+        # Humedad de la roca.
         rain = h["precip"] or 0
-        dry_rate = 0.06 + 0.25 * h["sun"] * (1 - h["cloud"] / 100) + min(h["wind"], 30) / 30 * 0.12
-        dry_rate += max(0, 1 - h["rh"] / 100) * 0.25
-        wet = max(0.0, wet + rain * (0.35 if rain_safe else 1.0) - dry_rate)
-        wet = min(wet, 6)
-        h["wet"] = round(wet, 2)
-        h["rock"] = "wet" if wet > 0.6 else "damp" if wet > 0.15 else "dry"
-        rock_t = rock_temperature(h["temp"], h["sun"], h["cloud"], h["wind"])
-        h["rock_t"] = round(rock_t, 1)
-        s = 100 * temp_score(rock_t, p) * humidity_score(h["rh"]) * wind_score(h["wind"])
-        if h["rock"] == "wet":
-            s = min(s, 20)
-        elif h["rock"] == "damp":
-            s *= 0.65
+        condense = max(0.0, min(1.0, (dew + 0.5 - rock_t) / 2))
+        dry = (0.05 + irr / 1500 + min(eff, 30) / 120 + max(0, 1 - rh / 100) * 0.3) * rock.drying
+        wet = min(6.0, max(0.0, wet + rain * rock.absorb + condense * 0.12 - dry * (1 - condense)))
+        state = "wet" if wet > 0.6 else "damp" if wet > 0.15 else "dry"
+        f = {
+            "temp": temp_score(comfort, p),
+            "humidity": humidity_score(rh),
+            "wind": wind_score(eff, gust, rh),
+            "sun": 1.0,
+            "condensation": 1 - 0.6 * condense,
+            "moisture": {"dry": 1.0, "damp": 0.6, "wet": 0.2}[state],
+            "rain": 1.0,
+            "daylight": 1.0,
+        }
+        if h["day"] and irr > 250 and comfort > p.tmax:
+            f["sun"] = 0.85  # sol de lleno en un día de calor
+        elif h["day"] and irr < 50 and comfort < p.tmin and cloud < 50:
+            f["sun"] = 0.92  # día frío y despejado con la pared a la sombra
         if rain >= 0.1:
-            s = min(s, 35 if rain_safe else 15)
-        h["score"] = round(s)
-        h["cat"] = "night" if not h["day"] else category(s)
+            f["rain"] = 0.4 if rock.sheltered else 0.15
+        elif i > now_idx and h.get("prob"):
+            f["rain"] = 1 - 0.35 * h["prob"] / 100
+        prev_day = hours[i - 1]["day"] if i else h["day"]
+        next_day = hours[i + 1]["day"] if i + 1 < len(hours) else h["day"]
+        if h["day"] and (not prev_day or not next_day):
+            f["daylight"] = 0.85
+        score = 100.0
+        for v in f.values():
+            score *= v
+        h.update(
+            rock_t=round(rock_t, 1), feels=round(feels, 1), comfort=round(comfort, 1), dew=round(dew, 1),
+            eff_wind=round(eff), gust=round(gust), irr=round(irr), wet=round(wet, 2), rock=state,
+            condensing=condense > 0.2, f={k: round(v, 2) for k, v in f.items()}, score=round(score),
+            cat="night" if not h["day"] else category(score),
+        )  # fmt: skip
 
 
 def best_window(hours: list[dict], length: int = 3) -> tuple[int, int, float] | None:
-    """Mejor ventana de `length` horas seguidas de día: (índice inicio, índice fin exclusivo, puntuación media)."""
+    """Mejor ventana de `length` horas seguidas de día, medida por su PEOR hora (lo que la pared aguanta toda la
+    sesión, no un pico): (índice inicio, índice fin exclusivo, puntuación de la peor hora)."""
     best = None
     for i in range(len(hours) - length + 1):
         win = hours[i : i + length]
         if not all(h["day"] for h in win):
             continue
+        low = min(h["score"] for h in win)
         mean = sum(h["score"] for h in win) / length
-        if best is None or mean > best[2] + 0.5:
-            best = (i, i + length, mean)
-    return best
+        if best is None or (low, mean) > (best[2], best[3]):
+            best = (i, i + length, low, mean)
+    return best[:3] if best else None
 
 
 # --- Resumen ---------------------------------------------------------------------------------------------------------
@@ -289,7 +373,7 @@ def summarize_day(date: str, day_hours: list[dict], sun: dict) -> dict:
         "rock": _rock_text(day_hours),
         "sun": sun,
     }
-    if win and win[2] >= 40:
+    if win and win[2] >= 45:
         a, b, mean = win
         out["window"] = {"from": day_hours[a]["time"][11:16], "to": f"{int(day_hours[b - 1]['time'][11:13]) + 1:02d}:00"}
         out["cat"] = category(mean)
@@ -332,6 +416,7 @@ def explain(days: list[dict], hours: list[dict], now_idx: int, sel: int, p: Pref
         last_rain = f"{since // 24} days ago"
     rock_state = {"dry": "Dry", "damp": "Damp", "wet": "Wet"}[now["rock"]]
     return {
+        "factors": factors(win_hours or [h for h in dh if h["day"]] or dh),
         "temperature": {
             "state": temp_state,
             "window": t_win,
@@ -342,6 +427,39 @@ def explain(days: list[dict], hours: list[dict], now_idx: int, sel: int, p: Pref
         "sun": {"state": sky, "clear_hours": clear},
         "rain": {"state": last_rain, "mm_3d": mm3},
     }
+
+
+FACTOR_LABELS = {
+    "temp": "Temperature", "humidity": "Humidity", "wind": "Wind at the wall", "sun": "Sun", "rain": "Rain",
+    "moisture": "Rock moisture", "condensation": "Condensation", "daylight": "Daylight",
+}  # fmt: skip
+
+
+def factors(hs: list[dict]) -> list[dict]:
+    """«Why this score?»: cada factor (0–1, la media en las horas `hs`) con una frase de lo que lo explica."""
+    n = len(hs)
+    avg = lambda k: sum(h[k] for h in hs) / n  # noqa: E731
+    fav = lambda k: sum(h["f"][k] for h in hs) / n  # noqa: E731
+    comfort, rh = avg("comfort"), avg("rh")
+    eff, gust = avg("eff_wind"), max(h["gust"] for h in hs)
+    sun_h = sum(h["sun"] for h in hs)
+    rain_mm = sum(h["precip"] or 0 for h in hs)
+    prob = max(h["prob"] or 0 for h in hs)
+    rock_t, dew = min(h["rock_t"] for h in hs), max(h["dew"] for h in hs)
+    states = {h["rock"] for h in hs}
+    text = {
+        "temp": f"feels {comfort:.0f} °C at the wall (air {avg('temp'):.0f}°, rock {avg('rock_t'):.0f}°)",
+        "humidity": f"{rh:.0f} % relative humidity",
+        "wind": f"{eff:.0f} km/h at the wall, gusts {gust} km/h",
+        "sun": f"{sun_h:.1f} h of sun on the wall, {avg('irr'):.0f} W/m²",
+        "rain": f"{rain_mm:.1f} mm" + (f", {prob} % chance" if prob else ""),
+        "moisture": "dry" if states == {"dry"} else "wet" if "wet" in states else "damp",
+        "condensation": f"rock {rock_t:.0f}° vs dew point {dew:.0f}°"
+        + (" — condensing" if any(h["condensing"] for h in hs) else ""),
+        "daylight": "full daylight" if fav("daylight") > 0.99 else "near sunrise or sunset",
+    }
+    out = [{"key": k, "label": FACTOR_LABELS[k], "value": round(fav(k), 2), "text": text[k]} for k in FACTOR_LABELS]
+    return sorted(out, key=lambda x: x["value"])
 
 
 # --- Orquestación ----------------------------------------------------------------------------------------------------
@@ -378,12 +496,17 @@ def parse_weather(w: dict) -> list[dict]:
                 "wind_dir": h["wind_direction_10m"][i],
                 "day": bool(h["is_day"][i]),
                 "rad": h["shortwave_radiation"][i],
+                "dew": (h.get("dew_point_2m") or [None] * len(h["time"]))[i],
+                "gust": (h.get("wind_gusts_10m") or [None] * len(h["time"]))[i],
             }
         )
     return [x for x in out if x["temp"] is not None]
 
 
-def build(crag: dict, sectors: list[dict], weather: dict, aspect: dict, p: Prefs, now: datetime | None = None) -> dict:
+def build(
+    crag: dict, sectors: list[dict], weather: dict, aspect: dict, p: Prefs, now: datetime | None = None,
+    rock_type: str | None = None,
+) -> dict:  # fmt: skip
     lat, lon = crag["location"]["latitude"], crag["location"]["longitude"]
     offset = weather.get("utc_offset_seconds", 0)
     hours = parse_weather(weather)
@@ -397,7 +520,8 @@ def build(crag: dict, sectors: list[dict], weather: dict, aspect: dict, p: Prefs
         suns[d] = wall_sun(datetime.fromisoformat(d), offset, lat, lon, aspect["deg"])
     for h in hours:
         h["sun"] = round(hourly_sun_fraction(suns[h["time"][:10]]["sun"], int(h["time"][11:13])), 2)
-    score_hours(hours, p, bool(crag.get("rainSafety")))
+    rock = Rock(rock_type or "limestone", bool(crag.get("rainSafety")))
+    score_hours(hours, p, rock, aspect["deg"], now_idx)
 
     days = []
     for d in dates:
@@ -418,6 +542,8 @@ def build(crag: dict, sectors: list[dict], weather: dict, aspect: dict, p: Prefs
             "lon": lon,
             "sectors": [{"name": s["sectorName"], "slug": s["sectorSlug"]} for s in sectors],
             "rain_safe": bool(crag.get("rainSafety")),
+            "rock": rock.type,
+            "rock_known": rock_type is not None,
             "season": crag.get("season"),
         },
         "aspect": aspect,

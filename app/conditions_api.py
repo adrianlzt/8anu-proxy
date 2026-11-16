@@ -47,7 +47,7 @@ async def _om_get(app, path: str, params: dict) -> dict:
     return r.json()
 
 
-async def _crag(app, key: str) -> tuple[dict, list[dict]]:
+async def _crag(app, key: str) -> tuple[dict, list[dict], str | None]:
     from .main import UPSTREAM, fetch  # evitar import circular
 
     hit = _cache.get(("crag", key), cond.CRAG_TTL)
@@ -61,8 +61,13 @@ async def _crag(app, key: str) -> tuple[dict, list[dict]]:
     crag = json.loads(r.content)["crag"]
     rs = await fetch(app, "GET", base + "/sectors", hdr, b"", "")
     sectors = json.loads(rs.content) if rs.status == 200 else []
-    _cache.put(("crag", key), (crag, sectors))
-    return crag, sectors
+    # Tipo de roca: lo da el resumen de condiciones de 8a.nu (público, aunque el resto esté bloqueado).
+    rc = await fetch(app, "GET", base + "/conditions", hdr, b"", "")
+    rock = None
+    if rc.status == 200:
+        rock = ((json.loads(rc.content).get("rock") or {}).get("type") or "").lower() or None
+    _cache.put(("crag", key), (crag, sectors, rock))
+    return crag, sectors, rock
 
 
 async def _weather(app, lat: float, lon: float) -> dict:
@@ -118,12 +123,12 @@ async def conditions_json(request: Request) -> Response:
     lock = _locks.setdefault(key, asyncio.Lock())
     async with lock:
         try:
-            crag, sectors = await _crag(request.app, key)
+            crag, sectors, rock = await _crag(request.app, key)
         except LookupError as e:
             return JSONResponse({"error": str(e)}, status_code=404)
         lat, lon = crag["location"]["latitude"], crag["location"]["longitude"]
         weather, aspect = await asyncio.gather(_weather(request.app, lat, lon), _aspect(request.app, key, lat, lon))
-    data = cond.build(crag, sectors, weather, aspect, p)
+    data = cond.build(crag, sectors, weather, aspect, p, rock_type=rock)
     # Sol de cada sector con orientación propia (para «Sun on the wall»).
     for s in data["crag"]["sectors"]:
         deg = aspect["sectors"].get(s["slug"])
