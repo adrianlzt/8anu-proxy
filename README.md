@@ -23,11 +23,19 @@ como el [de theCrag](https://github.com/adrianlzt/thecrag-proxy), del que copia 
   Funciona con usuario y contraseña; «Sign in with Apple» (broker de Keycloak) vuelve a vlatka directamente y no.
 - **reCAPTCHA**: algunas acciones (comentarios, borrar ascensiones…) mandan un token de reCAPTCHA, cuya clave de sitio
   está limitada a los dominios de 8a.nu. En el proxy puede fallar.
-- **WAF**: 8a.nu va detrás de Cloudflare. Como en theCrag, el proxy manda cabeceras de navegador (`User-Agent`,
-  `Accept`, `Accept-Language`, nombres en su grafía). Además, el WAF corta al proxy con 403 «Attention Required» si
-  le llegan muchas peticiones seguidas (pasó con ~160 en 2–3 minutos, al cargar páginas con un navegador headless):
-  por eso los ficheros de `/_nuxt/` (con hash e `immutable`) se guardan en `~/.cache/8anu-proxy` (`CACHE_DIR`) y solo
-  se piden una vez, y no se mandan más de 6 peticiones a la vez (`MAX_CONCURRENCY`).
+- **WAF**: 8a.nu va detrás de Cloudflare con gestión de bots. Con httpx y cabeceras de navegador (lo que basta en
+  theCrag) dejó pasar ~160 peticiones y luego cortó al proxy con 403 «Attention Required» durante más de 20 minutos,
+  mientras que a curl desde la misma IP lo seguía dejando: mira la huella TLS/HTTP2. Por eso el proxy habla con 8a.nu
+  con [curl_cffi](https://github.com/lexiforest/curl_cffi), imitando a la misma familia de navegador que el cliente
+  (`impersonate_for`: Chrome, Chrome Android, Safari iOS, Safari, Firefox) y pasándole su `User-Agent` (la versión
+  móvil de 8a.nu depende de él). La sesión de curl_cffi descarta las cookies (`discard_cookies`): van y vienen en
+  las cabeceras de cada cliente.
+  Además, el script de detección de Cloudflare (`/cdn-cgi/challenge-platform/…/jsd`, pasa por el proxy) marca como bot
+  a un Chrome **headless** y a partir de ahí da 403 a las peticiones con esa cookie de sesión: las pruebas con
+  Playwright cargan media portada y se cortan. Un navegador normal no tiene ese problema, y una petición sin cookies
+  (curl) sigue pasando. Para reducir peticiones, los ficheros de `/_nuxt/` (con hash, `immutable`) se guardan en
+  `~/.cache/8anu-proxy` (`CACHE_DIR`) y solo se piden una vez, y no van más de 6 peticiones a la vez
+  (`MAX_CONCURRENCY`).
 - **No indexable**: `X-Robots-Tag: noindex` en todo y `robots.txt` con `Disallow: /`. Con `PROXY_PASSWORD` pide
   autenticación básica la primera vez (luego cookie `nuproxy_auth` de un año).
 
@@ -38,7 +46,8 @@ uv run pytest -q
 uv run uvicorn app.main:app --port 8472   # http://localhost:8472/
 ```
 
-Para probar con curl hace falta un `User-Agent` de navegador completo y `Accept: text/html`.
+Con curl basta `curl -H 'Accept: text/html' http://localhost:8472/…` (el proxy pone la huella y las cabeceras de
+Chrome). Un navegador headless acaba bloqueado por Cloudflare (ver arriba).
 
 ## Despliegue en arc2
 

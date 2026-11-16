@@ -16,7 +16,7 @@ SEEN: dict[str, object] = {}
 def client(monkeypatch, tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         assert "nuproxy_auth" not in request.headers.get("cookie", "")
-        SEEN.update(host=request.url.host, raw=request.headers.raw, referer=request.headers.get("referer"))
+        SEEN.update(host=request.url.host, headers=dict(request.headers), referer=request.headers.get("referer"))
         SEEN.update(origin=request.headers.get("origin"), body=request.content.decode())
         path = request.url.path
         if path.startswith("/auth/"):
@@ -48,12 +48,12 @@ def client(monkeypatch, tmp_path):
             text='<a href="https://www.8a.nu/crags">x</a><script>{APP_URL:"https:\\u002F\\u002Fwww.8a.nu"}</script>',
         )
 
-    real = httpx.AsyncClient
+    async def fake_fetch(app, method, url, headers, body, ua):
+        SEEN["impersonate"] = main.impersonate_for(ua)
+        r = handler(httpx.Request(method, url, headers=headers, content=body))
+        return main.Upstream(r.status_code, list(r.headers.multi_items()), r.content)
 
-    def fake_client(**kw):
-        return real(transport=httpx.MockTransport(handler), **kw)
-
-    monkeypatch.setattr(main.httpx, "AsyncClient", fake_client)
+    monkeypatch.setattr(main, "fetch", fake_fetch)
     monkeypatch.setattr(main, "CACHE_DIR", tmp_path)
     with TestClient(main.app, base_url=PUBLIC) as c:
         yield c
@@ -90,10 +90,21 @@ def test_login_por_el_proxy(client):
 
 def test_cabeceras_hacia_arriba(client):
     client.get("/crags", headers={"referer": f"{PUBLIC}/", "user-agent": "curl/8", "x-forwarded-for": "1.2.3.4"})
-    names = {k for k, _ in SEEN["raw"]}
-    assert b"User-Agent" in names and b"Accept-Language" in names
-    assert not any(k.lower() == b"x-forwarded-for" for k in names)
+    assert "user-agent" not in SEEN["headers"]  # lo pone curl_cffi, el del navegador que imita
+    assert "x-forwarded-for" not in SEEN["headers"]
     assert SEEN["referer"] == "https://www.8a.nu/"
+    assert SEEN["impersonate"] == "chrome"
+    iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+    client.get("/crags", headers={"user-agent": iphone})
+    assert SEEN["headers"]["user-agent"] == iphone
+    assert SEEN["impersonate"] == "safari_ios"
+
+
+def test_impersonate_for():
+    android = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36"
+    assert main.impersonate_for(android) == "chrome_android"
+    assert main.impersonate_for("Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0") == "firefox"
+    assert main.impersonate_for("") == "chrome"
 
 
 def test_robots(client):

@@ -5,13 +5,14 @@ description = "Proxy inverso de 8a.nu"
 requires-python = ">=3.13"
 dependencies = [
     "brotli>=1.2.1",
-    "httpx>=0.28",
+    "curl-cffi>=0.17.0",
     "starlette>=0.46",
     "uvicorn>=0.34",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=8",
 ]
 

@@ -17,13 +17,13 @@ import hmac
 import os
 import re
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
-import httpx
+from curl_cffi.requests import AsyncSession
 from starlette.applications import Starlette
-from starlette.background import BackgroundTask
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, Response, StreamingResponse
+from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route
 
 UPSTREAM = os.environ.get("UPSTREAM", "https://www.8a.nu").rstrip("/")
@@ -35,41 +35,39 @@ MAX_CONCURRENCY = int(os.environ.get("MAX_CONCURRENCY", "6"))
 AUTH_COOKIE = "nuproxy_auth"
 ROBOTS = "noindex, nofollow, noarchive, nosnippet"
 
-# 8a.nu va detrás de Cloudflare, como theCrag: se presenta como un navegador para que el WAF no lo bloquee. El
-# user-agent del navegador del cliente se respeta (el del proxy solo sustituye al de un cliente HTTP).
-USER_AGENT = os.environ.get(
-    "NU8A_UA",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
-)
-BROWSER_HEADERS = {
-    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "accept-language": "es-ES,es;q=0.9,en;q=0.8",
-}
-# httpx pone los nombres de cabecera en minúscula; en HTTP/1.1 los WAF de Cloudflare lo notan (en theCrag daba 403).
-HEADER_CASE = {
-    b"accept": b"Accept",
-    b"accept-encoding": b"Accept-Encoding",
-    b"accept-language": b"Accept-Language",
-    b"content-type": b"Content-Type",
-    b"cookie": b"Cookie",
-    b"if-modified-since": b"If-Modified-Since",
-    b"if-none-match": b"If-None-Match",
-    b"origin": b"Origin",
-    b"pragma": b"Pragma",
-    b"referer": b"Referer",
-    b"user-agent": b"User-Agent",
-    b"x-requested-with": b"X-Requested-With",
-}
+# 8a.nu va detrás de Cloudflare y su WAF bloquea al proxy (403 «Attention Required») aunque mande cabeceras de
+# navegador: con httpx dejó pasar ~160 peticiones y luego lo cortó, mientras que a curl desde la misma IP lo seguía
+# dejando. Mira la huella TLS/HTTP2 del cliente, así que el proxy habla con 8a.nu con curl_cffi imitando a un navegador
+# (huella, HTTP/2 y cabeceras sec-ch-ua…). Se imita la familia del navegador del cliente (la versión móvil de 8a.nu
+# depende del User-Agent) y se le pasa su User-Agent.
+IMPERSONATE_DEFAULT = os.environ.get("NU8A_IMPERSONATE", "chrome")
+
+
+def impersonate_for(user_agent: str) -> str:
+    ua = user_agent.lower()
+    if not ua.startswith("mozilla/"):
+        return IMPERSONATE_DEFAULT
+    if "iphone" in ua or "ipad" in ua:
+        return "safari_ios"
+    if "android" in ua:
+        return "chrome_android"
+    if "safari" in ua and "chrome" not in ua and "chromium" not in ua:
+        return "safari"
+    if "firefox" in ua:
+        return "firefox"
+    return "chrome"
+
 
 HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
     "transfer-encoding", "upgrade", "host", "content-length",
 }  # fmt: skip
 # Cabeceras de la petición que se reenvían. El resto no: ni las del túnel (IP y país del cliente, cf-*,
-# x-forwarded-*) ni las de navegador (sec-ch-*, sec-fetch-*). `authorization` sí: la API de 8a.nu podría usar
+# x-forwarded-*) ni las de navegador (sec-ch-*, sec-fetch-*, user-agent), que pone curl_cffi según el navegador que
+# imita (el user-agent del cliente se le pasa aparte). `authorization` sí: la API de 8a.nu podría usar
 # tokens Bearer además de la cookie de sesión.
 FORWARD_REQUEST = {
-    "user-agent", "accept", "accept-language", "cookie", "referer", "origin", "content-type", "authorization",
+    "accept", "accept-language", "cookie", "referer", "origin", "content-type", "authorization",
     "x-requested-with", "if-none-match", "if-modified-since", "range", "cache-control", "pragma",
     "recaptcha-token",
 }  # fmt: skip
@@ -142,10 +140,6 @@ def to_upstream(text: str, origin: str, upstream: str) -> str:
     return text.replace(origin, upstream)
 
 
-def _header_name(name: str) -> str:
-    return HEADER_CASE.get(name.encode(), b"-".join(p.capitalize() for p in name.encode().split(b"-"))).decode()
-
-
 def _request_headers(request: Request, origin: str) -> dict[str, str]:
     headers = {}
     for k, v in request.headers.items():
@@ -164,26 +158,50 @@ def _request_headers(request: Request, origin: str) -> dict[str, str]:
         elif lk == "referer":
             v = to_upstream_url(v, origin)
         headers[lk] = v
-    for k, v in BROWSER_HEADERS.items():
-        headers.setdefault(k, v)
-    if headers.get("accept") == "*/*" and request.method == "GET" and not request.url.path.startswith("/api/"):
-        headers["accept"] = BROWSER_HEADERS["accept"]
-    if not headers.get("user-agent") or headers["user-agent"].lower().startswith(("curl/", "python-", "httpx/")):
-        headers["user-agent"] = USER_AGENT
-    headers["accept-encoding"] = "gzip, deflate, br"
-    return {_header_name(k): v for k, v in headers.items()}
+    ua = request.headers.get("user-agent", "")
+    if ua.lower().startswith("mozilla/"):
+        headers["user-agent"] = ua
+    return headers
 
 
-def _response_headers(upstream: httpx.Response, origin: str) -> list[tuple[bytes, bytes]]:
+@dataclass
+class Upstream:
+    status: int
+    headers: list[tuple[str, str]]
+    content: bytes
+
+    def header(self, name: str) -> str:
+        return next((v for k, v in self.headers if k.lower() == name), "")
+
+    @property
+    def text(self) -> str:
+        m = re.search(r"charset=([\w-]+)", self.header("content-type"), re.I)
+        return self.content.decode(m.group(1) if m else "utf-8", "replace")
+
+
+async def fetch(app: Starlette, method: str, url: str, headers: dict[str, str], body: bytes, ua: str) -> Upstream:
+    """Petición a 8a.nu/Keycloak con la huella del navegador del cliente. Sin seguir redirecciones (las sigue el
+    navegador, por el proxy) y sin guardar cookies: van y vienen en las cabeceras de cada cliente."""
+    target = impersonate_for(ua)
+    sessions: dict[str, AsyncSession] = app.state.sessions
+    if target not in sessions:
+        sessions[target] = AsyncSession(impersonate=target, discard_cookies=True, timeout=30)
+    r = await sessions[target].request(
+        method, url, headers=headers, data=body or None, allow_redirects=False, default_headers=True
+    )
+    return Upstream(r.status_code, [(k, v) for k, v in r.headers.multi_items() if v is not None], r.content)
+
+
+def _response_headers(upstream: Upstream, origin: str) -> list[tuple[bytes, bytes]]:
     out = []
-    for k, v in upstream.headers.multi_items():
+    for k, v in upstream.headers:
         lk = k.lower()
         if lk in DROP_RESPONSE or lk.startswith("cf-"):
             continue
         if lk in ("location", "content-location", "link", "refresh"):
             v = to_public(v, origin)
         out.append((lk.encode(), v.encode("latin-1", "replace")))
-    for cookie in upstream.headers.get_list("set-cookie"):
+    for cookie in (v for k, v in upstream.headers if k.lower() == "set-cookie"):
         out.append((b"set-cookie", _COOKIE_DOMAIN_RE.sub("", cookie).encode("latin-1", "replace")))
     out.append((b"x-robots-tag", ROBOTS.encode()))
     return out
@@ -233,7 +251,6 @@ async def proxy(request: Request) -> Response:
             headers={"cache-control": "public, max-age=31536000, immutable", "x-robots-tag": ROBOTS},
         )
     origin = _origin(request)
-    client: httpx.AsyncClient = request.app.state.client
     upstream_base = upstream_for(request.url.path)
     url = upstream_base + request.scope["raw_path"].decode("latin-1")
     if request.url.query:
@@ -246,62 +263,45 @@ async def proxy(request: Request) -> Response:
         )
 
     async with request.app.state.sem:
-        req = client.build_request(request.method, url, headers=_request_headers(request, origin), content=body)
-        upstream = await client.send(req, stream=True)
-        headers = _response_headers(upstream, origin)
-        if PASSWORD and request.cookies.get(AUTH_COOKIE) != _auth_token():
-            headers.append(
-                (
-                    b"set-cookie",
-                    f"{AUTH_COOKIE}={_auth_token()}; Max-Age=31536000; Path=/; HttpOnly; Secure; SameSite=Lax".encode(),
-                )
+        upstream = await fetch(
+            request.app, request.method, url, _request_headers(request, origin), body,
+            request.headers.get("user-agent", ""),
+        )  # fmt: skip
+    headers = _response_headers(upstream, origin)
+    if PASSWORD and request.cookies.get(AUTH_COOKIE) != _auth_token():
+        headers.append(
+            (
+                b"set-cookie",
+                f"{AUTH_COOKIE}={_auth_token()}; Max-Age=31536000; Path=/; HttpOnly; Secure; SameSite=Lax".encode(),
             )
-        ctype = upstream.headers.get("content-type", "")
-        if cache and upstream.status_code == 200:
-            try:
-                await upstream.aread()
-            finally:
-                await upstream.aclose()
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            tmp = cache.with_name(f"{cache.name}.{os.getpid()}.{id(request)}.tmp")
-            tmp.write_bytes(upstream.content)
-            tmp.replace(cache)
-            data = upstream.content
-            if _is_text(ctype):
-                data = to_public(upstream.text, origin).encode(upstream.encoding or "utf-8", "replace")
-            resp = Response(data, status_code=200)
-            resp.raw_headers = [h for h in headers if h[0] not in (b"content-length",)] + [
-                (b"content-length", str(len(data)).encode())
-            ]
-            return resp
-        if not _is_text(ctype) or request.method == "HEAD":
-            resp = StreamingResponse(
-                upstream.aiter_bytes(), status_code=upstream.status_code, background=BackgroundTask(upstream.aclose)
-            )
-            resp.raw_headers = headers
-            return resp
-        try:
-            await upstream.aread()
-        finally:
-            await upstream.aclose()
-
-    content = to_public(upstream.text, origin).encode(upstream.encoding or "utf-8", "replace")
-    resp = Response(content, status_code=upstream.status_code)
-    resp.raw_headers = [h for h in headers if h[0] != b"content-type"] + [
-        (b"content-type", ctype.encode()),
-        (b"content-length", str(len(content)).encode()),
-    ]
+        )
+    if cache and upstream.status == 200:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_name(f"{cache.name}.{os.getpid()}.{id(request)}.tmp")
+        tmp.write_bytes(upstream.content)
+        tmp.replace(cache)
+    content = upstream.content
+    if _is_text(upstream.header("content-type")):
+        content = to_public(upstream.text, origin).encode("utf-8")
+        headers = [h for h in headers if h[0] != b"content-type"]
+        ctype = re.sub(r";\s*charset=[\w-]+", "", upstream.header("content-type"), flags=re.I)
+        headers.append((b"content-type", f"{ctype}; charset=utf-8".encode()))
+    if request.method == "HEAD":
+        content = b""
+    resp = Response(content, status_code=upstream.status)
+    resp.raw_headers = headers + [(b"content-length", str(len(content)).encode())]
     return resp
 
 
 @asynccontextmanager
 async def lifespan(app: Starlette):
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=False, http2=False
-    ) as client:
-        app.state.client = client
-        app.state.sem = asyncio.Semaphore(MAX_CONCURRENCY)
+    app.state.sessions = {}
+    app.state.sem = asyncio.Semaphore(MAX_CONCURRENCY)
+    try:
         yield
+    finally:
+        for session in app.state.sessions.values():
+            await session.close()
 
 
 METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
