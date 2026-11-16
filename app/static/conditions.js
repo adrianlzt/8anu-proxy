@@ -85,7 +85,7 @@
     const key = m.slice(1).join("/");
     if (state.root && state.root.isConnected && state.key === key) {
       const col = state.root.parentElement;
-      if (col) col.querySelectorAll(":scope > .crag-login-wall").forEach((w) => (w.style.display = "none"));
+      hideOfficial();
       return;
     }
     const root = document.createElement("div");
@@ -97,7 +97,6 @@
     if (col) {
       const hdr = Array.from(col.children).find((c) => /crag-mobile-header|crag-header/.test(c.className) && c.offsetWidth > 0);
       col.insertBefore(root, hdr ? hdr.nextSibling : col.firstChild);
-      col.querySelectorAll(":scope > .crag-login-wall").forEach((w) => (w.style.display = "none"));
     } else {
       const anchor = findAnchor();
       if (anchor) {
@@ -108,7 +107,19 @@
       }
     }
     state.root = root;
+    hideOfficial();
     if (state.key !== key || !state.data) load(key); else render();
+  }
+
+  // Lo que 8a.nu pone en la columna detrás de nuestro bloque (su página de condiciones, con o sin sesión, o el muro
+  // de «Log in») se esconde; «Show 8a.nu's version» lo vuelve a enseñar.
+  function hideOfficial() {
+    const root = state.root;
+    if (!root || !root.parentElement || root.parentElement === document.body) return;
+    for (let el = root.nextElementSibling; el; el = el.nextElementSibling) {
+      if (el.tagName === "FOOTER" || el.id === "nuc-official") continue;
+      el.style.display = state.showOfficial ? "" : "none";
+    }
   }
 
   async function load(key) {
@@ -140,7 +151,8 @@
     if (state.loading && !state.data) { root.innerHTML = '<div class="nuc-card nuc-pad">Loading conditions…</div>'; return; }
     if (state.error) { root.innerHTML = `<div class="nuc-card nuc-pad">Couldn't load conditions: ${esc(state.error)}</div>`; return; }
     const d = state.data;
-    root.innerHTML = [header(d), daysCard(d), bestTime(d), scoreCard(d), sunCard(d), whyCard(d), prefsCard(), webcamsCard(d), knowCard(d)].join("");
+    root.innerHTML = [header(d), daysCard(d), bestTime(d), scoreCard(d), sunCard(d), whyCard(d), prefsCard(), webcamsCard(d), knowCard(d),
+      `<a href="#" class="nuc-link nuc-official" data-official="1">${state.showOfficial ? "Hide" : "Show"} 8a.nu's version</a>`].join("");
     bind(root);
   }
 
@@ -402,6 +414,7 @@
     on("[data-day]", (b) => { state.sel = +b.dataset.day; render(); });
     on("[data-nav]", (b) => { state.sel = Math.min(state.data.days.length - 1, Math.max(0, state.sel + +b.dataset.nav)); render(); });
     on("[data-chart]", (b) => { state.chart = b.dataset.chart; render(); });
+    on("[data-official]", (b, e) => { e.preventDefault(); state.showOfficial = !state.showOfficial; hideOfficial(); render(); });
     on("[data-hourly]", () => { state.hourly = !state.hourly; render(); });
     on("[data-edit]", (b, e) => { e.preventDefault(); state.editPrefs = true; render(); });
     on("[data-cancel]", (b) => { if (b.dataset.cancel === "prefs") state.editPrefs = false; else state.editCrag = false; render(); });

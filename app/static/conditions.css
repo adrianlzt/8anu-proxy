@@ -143,3 +143,4 @@ body.nuc-standalone #nuc-root { max-width: 720px; margin: 0 auto; padding: 0 0 2
   .nuc-why { grid-template-columns: 1fr 1fr; gap: 12px; }
   .nuc-day { flex-basis: 118px; }
 }
+.nuc-official { display: block; text-align: center; padding: 8px; font-size: 14px; }
