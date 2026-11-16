@@ -480,7 +480,16 @@
     if (!readySince) readySince = Date.now();
     return Date.now() - readySince > 800;
   }
-  function tick() { try { if (hydrated()) mount(); } catch (e) { console.warn("nuc", e); } }
+  // Botón flotante al mapa de condiciones en todas las páginas de 8a.nu (fuera del árbol de Vue, en <body>).
+  function mapButton() {
+    if (document.body.classList.contains("nuc-standalone") || document.getElementById("nuc-mapbtn")) return;
+    const a = document.createElement("a");
+    a.id = "nuc-mapbtn";
+    a.href = "/_proxy/map";
+    a.textContent = "🗺 Conditions map";
+    document.body.appendChild(a);
+  }
+  function tick() { try { if (hydrated()) { mapButton(); mount(); } } catch (e) { console.warn("nuc", e); } }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tick); else tick();
   setInterval(tick, 500);
 })();
