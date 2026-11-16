@@ -1,6 +1,6 @@
 """Proxy inverso de www.8a.nu.
 
-https://8anu.adrianlzt.com/<ruta> sirve https://www.8a.nu/<ruta>: reescribe los enlaces absolutos, las redirecciones
+https://8a.adrianlzt.com/<ruta> sirve https://www.8a.nu/<ruta>: reescribe los enlaces absolutos, las redirecciones
 y las cookies para que la navegación siga en el proxy. El login de 8a.nu es OpenID Connect contra el Keycloak de
 Vertical-Life (vlatka.vertical-life.info/auth/…), que también se sirve desde el proxy bajo /auth/ para que la vuelta
 (`/callback`) llegue al proxy y la sesión se quede aquí (ver README). Imágenes (CloudFront), Mapbox y reCAPTCHA se

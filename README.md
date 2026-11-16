@@ -1,6 +1,6 @@
 # 8anu-proxy
 
-Proxy inverso de [8a.nu](https://www.8a.nu). Cambiando `www.8a.nu` por `8anu.adrianlzt.com` en cualquier URL se ve
+Proxy inverso de [8a.nu](https://www.8a.nu). Cambiando `www.8a.nu` por `8a.adrianlzt.com` en cualquier URL se ve
 la misma página, servida desde el proxy. Por ahora no cambia nada del contenido: es la base para añadirle cosas,
 como el [de theCrag](https://github.com/adrianlzt/thecrag-proxy), del que copia el enfoque.
 
@@ -53,7 +53,7 @@ Chrome). Un navegador headless acaba bloqueado por Cloudflare (ver arriba).
 
 Como el de theCrag: servicio de usuario (`deploy/8anu-proxy.service`, `127.0.0.1:8472`) publicado por el túnel de
 Cloudflare de arc2 (`cloudflared.service`, gestionado desde el panel de Zero Trust): hostname público
-`8anu.adrianlzt.com` → `http://localhost:8472`.
+`8a.adrianlzt.com` → `http://localhost:8472`.
 
 ```sh
 cp deploy/8anu-proxy.service ~/.config/systemd/user/ && systemctl --user daemon-reload

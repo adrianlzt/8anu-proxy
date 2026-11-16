@@ -4,7 +4,7 @@ from starlette.testclient import TestClient
 
 import app.main as main
 
-PUBLIC = "https://8anu.adrianlzt.com"
+PUBLIC = "https://8a.adrianlzt.com"
 KC_AUTH = (
     "https://vlatka.vertical-life.info/auth/realms/Vertical-Life/protocol/openid-connect/auth"
     "?client_id=8a-nu&redirect_uri=https%3A%2F%2Fwww.8a.nu%2Fcallback&state=s"
@@ -62,7 +62,7 @@ def client(monkeypatch, tmp_path):
 def test_reescribe_html_y_json(client):
     r = client.get("/")
     assert f'href="{PUBLIC}/crags"' in r.text
-    assert 'APP_URL:"https:\\u002F\\u002F8anu.adrianlzt.com"' in r.text
+    assert 'APP_URL:"https:\\u002F\\u002F8a.adrianlzt.com"' in r.text
     assert r.headers["x-robots-tag"].startswith("noindex")
     r = client.get("/api/x")
     assert r.json() == {"url": f"{PUBLIC}/crags", "img": "https://d3byf4kaqtov0k.cloudfront.net/a"}
