@@ -28,7 +28,7 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route
 
-from . import conditions_api, map_api
+from . import aspect, conditions_api, map_api
 
 UPSTREAM = os.environ.get("UPSTREAM", "https://www.8a.nu").rstrip("/")
 # Keycloak de Vertical-Life: sus rutas empiezan todas por /auth/, que en www.8a.nu no existe (404).
@@ -304,9 +304,12 @@ async def lifespan(app: Starlette):
     app.state.sessions = {}
     app.state.plain = AsyncSession(timeout=20)
     app.state.sem = asyncio.Semaphore(MAX_CONCURRENCY)
+    workers = [asyncio.create_task(aspect.worker(app, source)) for source in ("terrain", "osm")]
     try:
         yield
     finally:
+        for w in workers:
+            w.cancel()
         await app.state.plain.close()
         for session in app.state.sessions.values():
             await session.close()

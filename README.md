@@ -33,10 +33,20 @@ suelta en `/_proxy/conditions/<cat>/<país>/<escuela>`.
   «Why these conditions?» enseña cada factor con una barra. Las preferencias tienen estilo (deportiva 12–22 °C,
   bloque 4–14 °C por defecto). No está ajustada con ascensiones.
 - **Mapa** (`/_proxy/map`, `app/map_api.py`, `static/map.*`, enlace «🗺 Conditions map» en cada página de
-  condiciones): las ~9500 escuelas de 8a.nu (`/api/dotnet/crags/map` con un recuadro del mundo: coordenadas y rango
-  de grados; caché 1 día) en un mapa Leaflet/OSM, filtrables por estilo, grados, número de vías, valoración,
-  condiciones y nombre, con selector de día. Las condiciones se calculan para las escuelas visibles (hasta 60, las
-  más escaladas) con una sola llamada a Open-Meteo; la orientación es la guardada o, si no hay, sur supuesto.
+  condiciones): las ~13 800 escuelas de 8a.nu con su histograma de vías por grado (API del mapa de 8a.nu,
+  `collection/v1/web/map/items`, pedida por recuadros que se parten en cuatro cuando se llenan, porque la segunda
+  página da 500). Bajarla entera son unos 6 min, así que se guarda en `~/.cache/8anu-proxy/map-crags.json` y se
+  renueva en segundo plano cada día. Leaflet + agrupación de marcadores: cada grupo es un círculo con la mejor
+  condición (izquierda) y la peor (derecha) de sus escuelas. Filtros: estilo, rango de grados y **mínimo de vías en
+  ese rango** (Urdón no sale con 9a–9c), valoración, condiciones y nombre; selector de día.
+  Condiciones de todo lo visible (hasta 2000 escuelas, por tandas de 400): el tiempo se pide por celdas de 0,1°
+  (las escuelas cercanas lo comparten), hasta 100 celdas por llamada a Open-Meteo, con una hora de caché; el sol de
+  cada día se calcula una vez por lugar. 300 escuelas ≈ 2 llamadas y 4 s; repetido, 0,1 s.
+- **Orientación** (`app/aspect.py`): usuario > acantilados de OpenStreetMap (`natural=cliff` a <250 m; en OSM la
+  pared mira a la derecha del sentido de la línea; Overpass por cuadrículas de 0,25°, guardadas en
+  `~/.cache/8anu-proxy/cliffs/`, con servidores alternativos porque Overpass va saturado) > relieve (Open-Meteo) >
+  sur supuesto. En el mapa se resuelven en segundo plano (relieve enseguida, OSM despacio) y el mapa vuelve a
+  preguntar; en la página de una escuela se resuelve al abrirla.
 - **Datos del usuario**: orientaciones y webcams en SQLite (`~/.local/share/8anu-proxy/data.db`, `DATA_DIR`).
 
 ## Cómo funciona

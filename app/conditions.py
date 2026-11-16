@@ -9,6 +9,7 @@ La puntuación (v2, idea de SendScore) son reglas físicas aproximadas, no un mo
 «Puntuación (v2)» más abajo.
 """
 
+import functools
 import math
 import time
 from dataclasses import dataclass
@@ -70,13 +71,22 @@ def sun_on_wall(elev: float, az: float, aspect: float) -> bool:
     return math.cos(math.radians(elev)) * math.cos(math.radians(az - aspect)) > 0.09
 
 
+@functools.lru_cache(maxsize=4096)
+def sun_track(day: str, utc_offset: int, lat: float, lon: float, step_min: int = 5) -> tuple:
+    """(minuto local, elevación, azimut) cada `step_min` minutos de un día. Se cachea por día y lugar (redondeado a
+    0,05°: el sol no cambia apreciablemente en 5 km), así las orientaciones y escuelas cercanas la comparten."""
+    start = datetime.fromisoformat(day) - timedelta(seconds=utc_offset)
+    return tuple(
+        (m, *sun_position(start + timedelta(minutes=m), lat, lon)) for m in range(0, 24 * 60 + step_min, step_min)
+    )
+
+
 def sun_intervals(day: datetime, utc_offset: int, lat: float, lon: float, aspect: float, step_min: int = 5):
     """Tramos (inicio, fin) en minutos locales del día con sol en la pared, y los de luz de día."""
+    track = sun_track(day.strftime("%Y-%m-%d"), utc_offset, round(lat * 20) / 20, round(lon * 20) / 20, step_min)
     sun, light = [], []
-    start = day - timedelta(seconds=utc_offset)
     cur_sun = cur_light = None
-    for m in range(0, 24 * 60 + step_min, step_min):
-        el, az = sun_position(start + timedelta(minutes=m), lat, lon)
+    for m, el, az in track:
         on = m < 24 * 60 and sun_on_wall(el, az, aspect)
         lit = m < 24 * 60 and el > -0.83
         if on and cur_sun is None:

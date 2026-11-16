@@ -16,6 +16,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from starlette.routing import Route
 
+from . import aspect
 from . import conditions as cond
 from . import store
 
@@ -87,29 +88,15 @@ async def _weather(app, lat: float, lon: float) -> dict:
 
 
 async def _aspect(app, key: str, lat: float, lon: float) -> dict:
-    rows = store.get_aspects(key)
-    user = next((r for r in rows if r["sector"] == "" and r["source"] == "user"), None)
-    sectors = {r["sector"]: r["deg"] for r in rows if r["sector"] and r["source"] == "user"}
-    if user:
-        return {"deg": user["deg"], "source": "user", "compass": cond.compass(user["deg"]), "sectors": sectors}
-    dem = next((r for r in rows if r["sector"] == "" and r["source"] == "terrain"), None)
-    if not dem:
-        pts = cond.terrain_rays(lat, lon)
-        elev = await _om_get(
-            app,
-            "elevation",
-            {"latitude": ",".join(f"{p[2]:.6f}" for p in pts), "longitude": ",".join(f"{p[3]:.6f}" for p in pts)},
-        )
-        deg, slope = cond.rays_aspect(pts, elev["elevation"])
-        store.set_aspect(key, "", deg, "terrain", slope)
-        dem = {"deg": deg % 360, "slope": slope}
-    return {
-        "deg": dem["deg"],
-        "source": "terrain",
-        "slope": round(dem["slope"] or 0),
-        "compass": cond.compass(dem["deg"]),
-        "sectors": sectors,
-    }
+    """Orientación (ver app/aspect.py). Si aún no hay una buena (OSM o del usuario), se calcula ya: es una escuela."""
+    a = aspect.current(key)
+    if a["source"] in ("default", "terrain"):
+        try:
+            await asyncio.wait_for(aspect.resolve(app, key, lat, lon), 30)
+        except Exception as e:  # noqa: BLE001 — se usa lo que haya
+            aspect.log.warning("orientación de %s: %s", key, e)
+        a = aspect.current(key)
+    return a
 
 
 async def conditions_json(request: Request) -> Response:

@@ -7,6 +7,8 @@
   <title>Crag conditions map</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin="">
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
   <link rel="stylesheet" href="/_proxy/static/map.css">
   <script src="/_proxy/static/map.js" defer></script>
 </head>
@@ -20,11 +22,12 @@
   <form id="m-filters" class="m-filters" hidden>
     <label>Style <select name="cat"><option value="0">Sport</option><option value="1">Boulder</option><option value="">Both</option></select></label>
     <label>Grades <span><select name="gfrom"></select> – <select name="gto"></select></span></label>
-    <label>Min. routes <input name="routes" type="number" min="0" step="10" value="20"></label>
+    <label>Min. routes in that range <input name="inrange" type="number" min="0" step="1" value="5"></label>
     <label>Min. rating <select name="rating"><option value="0">Any</option><option value="3">★ 3+</option><option value="3.5">★ 3.5+</option><option value="4">★ 4+</option></select></label>
     <label>Conditions <select name="cond"><option value="">Any</option><option value="ok">OK or better</option><option value="good">Good or better</option><option value="great">Great</option></select></label>
     <label>Search <input name="q" type="search" placeholder="crag or area"></label>
-    <p class="m-muted">Your ideal temperature comes from the crag Conditions page (Your preferences).</p>
+    <p class="m-muted">Groups show the best (left) and worst (right) conditions of their crags. Your ideal temperature
+      comes from the crag Conditions page (Your preferences).</p>
   </form>
   <div id="m-map" class="m-map"></div>
   <div id="m-status" class="m-status"></div>

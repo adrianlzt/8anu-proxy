@@ -1,12 +1,13 @@
-/* Mapa de condiciones (8anu-proxy): escuelas de 8a.nu filtrables y coloreadas por las condiciones del día elegido.
- * Las condiciones se piden solo para las escuelas visibles (las MAX con más ascensiones) y se guardan por día. */
+/* Mapa de condiciones (8anu-proxy): escuelas de 8a.nu agrupadas (cada grupo enseña la mejor y la peor condición de
+ * sus escuelas), filtrables por estilo, vías en un rango de grados, valoración y condiciones, coloreadas por el día
+ * elegido. Las condiciones se piden para todo lo visible (si no son demasiadas) por tandas de BATCH. */
 (function () {
   "use strict";
-  const MAX = 60;
+  const BATCH = 400, MAX_VIEW = 2000;
   const FKEY = "nuc-map-filters", VKEY = "nuc-map-view";
   const RANK = { great: 3, good: 2, ok: 1, bad: 0 };
   const LABEL = { great: "Great", good: "Good", ok: "OK", bad: "Bad" };
-  const COLOR = { great: "#1e8a4c", good: "#8fd8ac", ok: "#ffd166", bad: "#e0475e", none: "#9a9a94" };
+  const COLOR = { great: "#1e8a4c", good: "#8fd8ac", ok: "#ffd166", bad: "#e0475e", none: "#a3a39d" };
   // Índices de grado de 8a.nu → francés (deportiva) / Font (bloque).
   const GRADES = [[3, "3a"], [6, "4a"], [9, "4c"], [11, "5a"], [12, "5b"], [14, "5c"], [16, "6a"], [17, "6a+"], [18, "6b"],
     [19, "6b+"], [21, "6c"], [22, "6c+"], [23, "7a"], [24, "7a+"], [25, "7b"], [26, "7b+"], [27, "7c"], [28, "7c+"], [29, "8a"],
@@ -15,144 +16,183 @@
   const DAYN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
   const prefs = (() => { try { return Object.assign({ tmin: 12, tmax: 22 }, JSON.parse(localStorage.getItem("nuc-prefs") || "{}")); } catch (e) { return { tmin: 12, tmax: 22 }; } })();
-  const st = { crags: [], cond: {}, day: 0, markers: new Map(), pending: false };
+  const st = { crags: [], cond: {}, retries: {}, day: 0, markers: new Map(), loading: false };
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   // --- Filtros ---------------------------------------------------------------------------------------------------------
   const form = $("#m-filters");
-  for (const name of ["gfrom", "gto"]) {
-    form.elements[name].innerHTML = GRADES.map(([k, g]) => `<option value="${k}">${g}</option>`).join("");
-  }
+  for (const name of ["gfrom", "gto"]) form.elements[name].innerHTML = GRADES.map(([k, g]) => `<option value="${k}">${g}</option>`).join("");
   const saved = (() => { try { return JSON.parse(localStorage.getItem(FKEY) || "{}"); } catch (e) { return {}; } })();
-  const defaults = { cat: "0", gfrom: "16", gto: "29", routes: "20", rating: "0", cond: "", q: "" };
-  const f0 = Object.assign({}, defaults, saved);
-  for (const [k, v] of Object.entries(f0)) {
-    const el = form.elements[k];
-    if (!el) continue;
-    if (el.type === "checkbox") el.checked = !!v; else el.value = v;
-  }
+  const f0 = Object.assign({ cat: "0", gfrom: "16", gto: "29", inrange: "5", rating: "0", cond: "", q: "" }, saved);
+  for (const [k, v] of Object.entries(f0)) if (form.elements[k]) form.elements[k].value = v;
   function filters() {
     const e = form.elements;
-    return { cat: e.cat.value, gfrom: +e.gfrom.value, gto: +e.gto.value, routes: +e.routes.value || 0, rating: +e.rating.value || 0,
-             cond: e.cond.value, q: e.q.value.trim().toLowerCase() };
+    return { cat: e.cat.value, gfrom: +e.gfrom.value, gto: Math.max(+e.gfrom.value, +e.gto.value), inrange: +e.inrange.value || 0,
+             rating: +e.rating.value || 0, cond: e.cond.value, q: e.q.value.trim().toLowerCase() };
   }
-  function saveFilters() {
-    const f = filters();
-    localStorage.setItem(FKEY, JSON.stringify(Object.assign({}, f, { gfrom: String(f.gfrom), gto: String(f.gto) })));
-  }
-  function pass(c, f) {
+  // Vías de la escuela con grado en el rango (el índice de grado empieza en 1).
+  const inRange = (c, f) => { let n = 0; for (let i = f.gfrom; i <= f.gto; i++) n += c.g[i - 1] || 0; return n; };
+  function pass(c, f, withCond = true) {
     if (f.cat !== "" && String(c.cat) !== f.cat) return false;
-    // Hay vías en el rango si el rango de la escuela lo solapa.
-    if (c.gmin != null && c.gmax != null && (c.gmax < f.gfrom || c.gmin > f.gto)) return false;
-    if (c.routes < f.routes || c.rating < f.rating) return false;
+    if (f.inrange > 0 ? inRange(c, f) < f.inrange : inRange(c, f) === 0) return false;
+    if (c.rating < f.rating) return false;
     if (f.q && !`${c.name} ${c.area || ""} ${c.country || ""}`.toLowerCase().includes(f.q)) return false;
-    if (f.cond) {
-      const d = dayOf(c);
-      if (d && RANK[d.cat] < RANK[f.cond]) return false;
-    }
+    if (withCond && f.cond) { const d = dayOf(c); if (d && RANK[d.cat] < RANK[f.cond]) return false; }
     return true;
   }
   $("#m-filters-btn").addEventListener("click", () => { form.hidden = !form.hidden; setTimeout(() => map.invalidateSize(), 50); });
-  form.addEventListener("input", () => { saveFilters(); redraw(); schedule(); });
+  form.addEventListener("input", () => {
+    const f = filters();
+    localStorage.setItem(FKEY, JSON.stringify(Object.assign({}, f, { gfrom: String(f.gfrom), gto: String(f.gto), inrange: String(f.inrange) })));
+    rebuild(); schedule();
+  });
 
   // --- Días ------------------------------------------------------------------------------------------------------------
   const today = new Date();
   $("#m-days").innerHTML = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(today.getTime() + i * 86400000);
-    const l = i === 0 ? "Today" : i === 1 ? "Tomorrow" : `${DAYN[d.getDay()]} ${d.getDate()}`;
-    return `<button type="button" data-d="${i}" class="${i === 0 ? "on" : ""}">${l}</button>`;
+    return `<button type="button" data-d="${i}" class="${i === 0 ? "on" : ""}">${i === 0 ? "Today" : i === 1 ? "Tomorrow" : `${DAYN[d.getDay()]} ${d.getDate()}`}</button>`;
   }).join("");
   $("#m-days").addEventListener("click", (e) => {
     const b = e.target.closest("button"); if (!b) return;
     st.day = +b.dataset.d;
     document.querySelectorAll("#m-days button").forEach((x) => x.classList.toggle("on", x === b));
-    redraw();
+    if (filters().cond) rebuild(); else recolor();
   });
   const dayOf = (c) => { const x = st.cond[c.key]; return x && x.days[st.day]; };
 
-  // --- Mapa ------------------------------------------------------------------------------------------------------------
-  // #lat,lon,zoom (enlace desde la página de condiciones de una escuela) o la última vista.
+  // --- Mapa y grupos ---------------------------------------------------------------------------------------------------
   const hash = location.hash.slice(1).split(",").map(Number);
   const view = hash.length >= 2 && hash.every((x) => !isNaN(x)) ? { c: [hash[0], hash[1]], z: hash[2] || 10 }
     : (() => { try { return JSON.parse(localStorage.getItem(VKEY)); } catch (e) { return null; } })() || { c: [40.4, -3.7], z: 6 };
   const map = L.map("m-map", { preferCanvas: true }).setView(view.c, view.z);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap" }).addTo(map);
+
+  // Cada grupo: un círculo partido, mitad con la mejor condición de sus escuelas y mitad con la peor, y el número.
+  const clusters = L.markerClusterGroup({
+    maxClusterRadius: 50, showCoverageOnHover: false, chunkedLoading: true,
+    iconCreateFunction(cluster) {
+      let best = null, worst = null, known = 0;
+      for (const m of cluster.getAllChildMarkers()) {
+        const cat = m.options.cat;
+        if (!cat) continue;
+        known++;
+        if (best === null || RANK[cat] > RANK[best]) best = cat;
+        if (worst === null || RANK[cat] < RANK[worst]) worst = cat;
+      }
+      const n = cluster.getChildCount(), size = n < 10 ? 34 : n < 100 ? 40 : 46;
+      const bg = known ? `conic-gradient(${COLOR[worst]} 0 50%, ${COLOR[best]} 50% 100%)` : COLOR.none;
+      const title = known ? `${n} crags · best ${LABEL[best]}, worst ${LABEL[worst]}${known < n ? ` (${known} with conditions)` : ""}` : `${n} crags`;
+      return L.divIcon({ html: `<div class="m-cl" style="background:${bg};width:${size}px;height:${size}px" title="${title}"><span>${n}</span></div>`,
+                         className: "m-cl-wrap", iconSize: [size, size] });
+    },
+  }).addTo(map);
+
   map.on("moveend", () => {
     const c = map.getCenter();
     localStorage.setItem(VKEY, JSON.stringify({ c: [c.lat, c.lng], z: map.getZoom() }));
-    redraw(); schedule();
+    list(); schedule();
   });
 
   function popup(c) {
-    const d = dayOf(c), x = st.cond[c.key];
-    const grades = c.gmin != null ? `${gname(c.gmin, c.cat)}–${gname(c.gmax, c.cat)}` : "?";
+    const d = dayOf(c), x = st.cond[c.key], f = filters();
+    const src = x ? { user: "set by you", osm: "from OpenStreetMap cliffs", terrain: "estimated from terrain", default: "not known yet" }[x.aspect_source] : "";
     const cond = d ? `<p><span class="m-badge c-${d.cat}">${LABEL[d.cat]}</span> ${d.window ? `best ${d.window.from}–${d.window.to}` : "no good window"} · ${d.tmax}°/${d.tmin}° · ${d.rain} mm · ${esc(d.rock)}</p>
-      <p class="m-muted">Wall ${esc(x.aspect)}${x.aspect_known ? "" : " (not known: assumed south)"}</p>` : "<p>Conditions not loaded: zoom in</p>";
-    return `<div class="m-pop"><b>${esc(c.name)}</b><br><small>${esc(c.area || c.country)} · ${c.cat === 1 ? "boulder" : "sport"} · ${c.routes} routes · ${grades} · ★${c.rating}${c.walk ? ` · ${c.walk} min` : ""}${c.rain ? " · rain-safe" : ""}</small>
+      <p class="m-muted">Wall faces ${esc(x.aspect)} (${src})</p>` : "<p class=\"m-muted\">Conditions not loaded yet</p>";
+    return `<div class="m-pop"><b>${esc(c.name)}</b><br><small>${esc(c.area || c.country)} · ${c.cat === 1 ? "boulder" : "sport"} · ${c.routes} routes · <b>${inRange(c, f)}</b> in ${gname(f.gfrom, c.cat)}–${gname(f.gto, c.cat)} · ★${c.rating}</small>
       ${cond}<a href="/crags/${c.key}/conditions">Full conditions →</a> · <a href="/crags/${c.key}/routes">Routes</a></div>`;
   }
 
-  function redraw() {
-    const f = filters(), b = map.getBounds();
-    const seen = new Set();
-    for (const c of st.crags) {
-      if (!pass(c, f)) continue;
-      seen.add(c.key);
-      const d = dayOf(c);
-      const color = d ? COLOR[d.cat] : COLOR.none;
-      let m = st.markers.get(c.key);
-      if (!m) {
-        m = L.circleMarker([c.lat, c.lon], { radius: 6, weight: 1, color: "#333", fillOpacity: 0.9 });
-        m.bindPopup(() => popup(c));
-        st.markers.set(c.key, m);
-      }
-      m.setStyle({ fillColor: color, radius: d ? 8 : 5 });
-      if (!map.hasLayer(m)) m.addTo(map);
+  function marker(c) {
+    let m = st.markers.get(c.key);
+    if (!m) {
+      m = L.circleMarker([c.lat, c.lon], { radius: 7, weight: 1, color: "#333", fillOpacity: 0.95, fillColor: COLOR.none });
+      m.bindPopup(() => popup(c));
+      st.markers.set(c.key, m);
     }
-    for (const [k, m] of st.markers) if (!seen.has(k) && map.hasLayer(m)) map.removeLayer(m);
-    // Lista: las visibles con condiciones, de mejor a peor.
-    const inView = st.crags.filter((c) => seen.has(c.key) && b.contains([c.lat, c.lon]));
-    const withCond = inView.filter((c) => dayOf(c)).sort((a, z) => dayOf(z).score - dayOf(a).score || z.ascents - a.ascents);
-    $("#m-list").innerHTML = withCond.slice(0, 50).map((c) => {
+    const d = dayOf(c);
+    m.options.cat = d ? d.cat : null;
+    m.setStyle({ fillColor: d ? COLOR[d.cat] : COLOR.none });
+    return m;
+  }
+
+  // Filtros cambiados: se rehace el grupo con las escuelas que pasan.
+  function rebuild() {
+    const f = filters();
+    clusters.clearLayers();
+    clusters.addLayers(st.crags.filter((c) => pass(c, f)).map(marker));
+    list();
+  }
+  // Día cambiado o condiciones nuevas: solo colores.
+  function recolor() {
+    const f = filters();
+    for (const c of st.crags) if (st.markers.has(c.key) && pass(c, f, false)) marker(c);
+    clusters.refreshClusters();
+    list();
+  }
+
+  function visible() {
+    const f = filters(), b = map.getBounds();
+    return st.crags.filter((c) => b.contains([c.lat, c.lon]) && pass(c, f, false));
+  }
+  function list() {
+    const f = filters(), inView = visible();
+    const withCond = inView.filter((c) => dayOf(c) && pass(c, f)).sort((a, z) => dayOf(z).score - dayOf(a).score || z.ascents - a.ascents);
+    $("#m-list").innerHTML = withCond.slice(0, 60).map((c) => {
       const d = dayOf(c);
-      const grades = c.gmin != null ? `${gname(c.gmin, c.cat)}–${gname(c.gmax, c.cat)}` : "";
       return `<li><span class="m-badge c-${d.cat}">${LABEL[d.cat]}</span><a href="/crags/${c.key}/conditions"><b>${esc(c.name)}</b>
-        <small>${d.window ? `${d.window.from}–${d.window.to}` : "no good window"} · ${d.tmax}°/${d.tmin}°${d.rain ? ` · ${d.rain} mm` : ""} · ${esc(c.area || c.country)} · ${c.routes} routes ${grades}</small></a></li>`;
+        <small>${d.window ? `${d.window.from}–${d.window.to}` : "no good window"} · ${d.tmax}°/${d.tmin}°${d.rain ? ` · ${d.rain} mm` : ""} · ${esc(c.area || c.country)} · ${inRange(c, f)} routes ${gname(f.gfrom, c.cat)}–${gname(f.gto, c.cat)}</small></a></li>`;
     }).join("");
-    const missing = inView.length - withCond.length;
-    $("#m-status").textContent = `${inView.length} crags in view · conditions for ${withCond.length}` +
-      (missing > 0 ? ` (zoom in to load the rest; up to ${MAX} at a time, most climbed first)` : "") +
+    const missing = inView.filter((c) => !st.cond[c.key]).length;
+    $("#m-status").textContent = `${inView.length} crags in view` +
+      (inView.length > MAX_VIEW ? ` · zoom in to load conditions (up to ${MAX_VIEW})` : missing ? ` · loading conditions for ${missing}…` : "") +
       ` · ideal ${prefs.tmin}–${prefs.tmax} °C`;
   }
 
+  // --- Condiciones -------------------------------------------------------------------------------------------------------
   let timer = null;
-  function schedule() { clearTimeout(timer); timer = setTimeout(loadConditions, 400); }
+  function schedule(ms = 400) { clearTimeout(timer); timer = setTimeout(loadConditions, ms); }
   async function loadConditions() {
-    if (st.pending) { schedule(); return; }
-    const f = filters(), b = map.getBounds();
-    const noCond = Object.assign({}, f, { cond: "" });
-    const want = st.crags.filter((c) => !st.cond[c.key] && pass(c, noCond) && b.contains([c.lat, c.lon]))
-      .sort((a, z) => z.ascents - a.ascents).slice(0, MAX);
+    if (st.loading) { schedule(); return; }
+    const inView = visible();
+    if (inView.length > MAX_VIEW) { list(); return; }
+    const want = inView.filter((c) => !st.cond[c.key]).sort((a, z) => z.ascents - a.ascents);
     if (!want.length) return;
-    st.pending = true;
-    $("#m-status").textContent = `Loading conditions for ${want.length} crags…`;
-    try {
-      const r = await fetch(`/_proxy/map/conditions?tmin=${prefs.tmin}&tmax=${prefs.tmax}&keys=${want.map((c) => c.key).join(",")}`);
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || r.status);
-      Object.assign(st.cond, d);
-    } catch (e) {
-      $("#m-status").textContent = `Couldn't load conditions: ${e.message || e}`;
+    st.loading = true;
+    for (let i = 0; i < want.length; i += BATCH) {
+      const chunk = want.slice(i, i + BATCH);
+      try {
+        const r = await fetch(`/_proxy/map/conditions?tmin=${prefs.tmin}&tmax=${prefs.tmax}&keys=${chunk.map((c) => c.key).join(",")}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || r.status);
+        Object.assign(st.cond, d);
+      } catch (e) {
+        $("#m-status").textContent = `Couldn't load conditions: ${e.message || e}`;
+        break;
+      }
+      if (filters().cond) rebuild(); else recolor();
     }
-    st.pending = false;
-    redraw();
+    st.loading = false;
+    retryAspects();
+  }
+  // Las escuelas sin orientación todavía (el servidor la está buscando en OpenStreetMap o en el relieve) se vuelven a
+  // pedir un poco después, unas pocas veces.
+  let retryTimer = null;
+  function retryAspects() {
+    clearTimeout(retryTimer);
+    const pending = Object.keys(st.cond).filter((k) => st.cond[k].aspect_source === "default" && (st.retries[k] || 0) < 6);
+    if (!pending.length) return;
+    retryTimer = setTimeout(() => {
+      for (const k of pending) { st.retries[k] = (st.retries[k] || 0) + 1; delete st.cond[k]; }
+      schedule(0);
+    }, 20000);
   }
 
   (async () => {
-    $("#m-status").textContent = "Loading crags…";
+    $("#m-status").textContent = "Loading crags… (the first time of the day it takes a while)";
     const r = await fetch("/_proxy/map/crags");
     st.crags = await r.json();
-    redraw(); schedule();
+    rebuild(); schedule(0);
   })();
 })();

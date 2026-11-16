@@ -36,3 +36,6 @@ body { margin: 0; font-family: "IBM Plex Sans", system-ui, -apple-system, sans-s
 .m-filters label { min-width: 0; }
 .m-filters input, .m-filters select { width: 100%; min-width: 0; }
 .m-filters span select { width: auto; }
+.m-cl-wrap { background: none; border: 0; }
+.m-cl { border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1.5px #333; display: flex; align-items: center; justify-content: center; }
+.m-cl span { background: rgba(255,255,255,.9); border-radius: 999px; padding: 0 5px; font-size: 12px; font-weight: 700; color: #1d1d1b; }
