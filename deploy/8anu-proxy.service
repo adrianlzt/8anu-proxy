@@ -1,0 +1,18 @@
+# Proxy en arc2 (servicio de usuario), publicado por el túnel de Cloudflare (cloudflared.service) como
+# 8anu.adrianlzt.com -> http://localhost:8472. Como el de theCrag.
+#   cp deploy/8anu-proxy.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+#   systemctl --user enable --now 8anu-proxy
+[Unit]
+Description=Proxy inverso de 8a.nu (puerto 8472, publicado por cloudflared)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/Documentos/escalada/8anu-proxy
+# Opcional: PROXY_PASSWORD (autenticación básica) en este fichero, fuera del repo. Sin él no pide contraseña.
+EnvironmentFile=-%h/.config/8anu-proxy.env
+ExecStart=/usr/bin/uv run --frozen --no-dev uvicorn app.main:app --host 127.0.0.1 --port 8472 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-server-header
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,111 @@
+import httpx
+import pytest
+from starlette.testclient import TestClient
+
+import app.main as main
+
+PUBLIC = "https://8anu.adrianlzt.com"
+KC_AUTH = (
+    "https://vlatka.vertical-life.info/auth/realms/Vertical-Life/protocol/openid-connect/auth"
+    "?client_id=8a-nu&redirect_uri=https%3A%2F%2Fwww.8a.nu%2Fcallback&state=s"
+)
+SEEN: dict[str, object] = {}
+
+
+@pytest.fixture
+def client(monkeypatch, tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "nuproxy_auth" not in request.headers.get("cookie", "")
+        SEEN.update(host=request.url.host, raw=request.headers.raw, referer=request.headers.get("referer"))
+        SEEN.update(origin=request.headers.get("origin"), body=request.content.decode())
+        path = request.url.path
+        if path.startswith("/auth/"):
+            assert request.url.host == "vlatka.vertical-life.info"
+            if path.endswith("/authenticate"):
+                return httpx.Response(302, headers={"location": "https://www.8a.nu/callback?state=s&code=c"})
+            return httpx.Response(
+                200,
+                headers=[
+                    ("set-cookie", "AUTH_SESSION_ID=x;Version=1;Path=/auth/realms/Vertical-Life/;Secure;HttpOnly"),
+                    ("content-type", "text/html"),
+                ],
+                text='<form action="https://vlatka.vertical-life.info/auth/realms/Vertical-Life/login-actions/'
+                'authenticate?client_data=e">',
+            )
+        assert request.url.host == "www.8a.nu"
+        if path == "/login":
+            return httpx.Response(
+                302, headers=[("location", KC_AUTH), ("set-cookie", "nu8a_session=1; Path=/; HttpOnly; Secure")]
+            )
+        if path.startswith("/_nuxt/"):
+            SEEN["nuxt"] = SEEN.get("nuxt", 0) + 1
+            return httpx.Response(200, headers={"content-type": "text/javascript"}, text='fetch("https://www.8a.nu/a")')
+        if path == "/api/x":
+            return httpx.Response(200, json={"url": "https://www.8a.nu/crags", "img": "https://d3byf4kaqtov0k.cloudfront.net/a"})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            text='<a href="https://www.8a.nu/crags">x</a><script>{APP_URL:"https:\\u002F\\u002Fwww.8a.nu"}</script>',
+        )
+
+    real = httpx.AsyncClient
+
+    def fake_client(**kw):
+        return real(transport=httpx.MockTransport(handler), **kw)
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", fake_client)
+    monkeypatch.setattr(main, "CACHE_DIR", tmp_path)
+    with TestClient(main.app, base_url=PUBLIC) as c:
+        yield c
+
+
+def test_reescribe_html_y_json(client):
+    r = client.get("/")
+    assert f'href="{PUBLIC}/crags"' in r.text
+    assert 'APP_URL:"https:\\u002F\\u002F8anu.adrianlzt.com"' in r.text
+    assert r.headers["x-robots-tag"].startswith("noindex")
+    r = client.get("/api/x")
+    assert r.json() == {"url": f"{PUBLIC}/crags", "img": "https://d3byf4kaqtov0k.cloudfront.net/a"}
+
+
+def test_login_por_el_proxy(client):
+    # /login → Keycloak servido en /auth/ del proxy, con la redirect_uri original (la única que acepta Keycloak).
+    r = client.get("/login", follow_redirects=False)
+    assert r.headers["location"] == KC_AUTH.replace("https://vlatka.vertical-life.info", PUBLIC)
+    assert "nu8a_session=1; Path=/; HttpOnly; Secure" in r.headers.get_list("set-cookie")
+    r = client.get("/auth/realms/Vertical-Life/protocol/openid-connect/auth?x=1")
+    assert SEEN["host"] == "vlatka.vertical-life.info"
+    assert f'action="{PUBLIC}/auth/realms/' in r.text
+    # Tras el usuario y la contraseña, Keycloak manda a www.8a.nu/callback: tiene que volver al proxy.
+    r = client.post(
+        "/auth/realms/Vertical-Life/login-actions/authenticate",
+        headers={"origin": PUBLIC, "referer": f"{PUBLIC}/auth/realms/x", "content-type": "application/x-www-form-urlencoded"},
+        content="username=a&password=b",
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == f"{PUBLIC}/callback?state=s&code=c"
+    assert SEEN["origin"] == "https://vlatka.vertical-life.info"
+    assert SEEN["referer"] == "https://vlatka.vertical-life.info/auth/realms/x"
+
+
+def test_cabeceras_hacia_arriba(client):
+    client.get("/crags", headers={"referer": f"{PUBLIC}/", "user-agent": "curl/8", "x-forwarded-for": "1.2.3.4"})
+    names = {k for k, _ in SEEN["raw"]}
+    assert b"User-Agent" in names and b"Accept-Language" in names
+    assert not any(k.lower() == b"x-forwarded-for" for k in names)
+    assert SEEN["referer"] == "https://www.8a.nu/"
+
+
+def test_robots(client):
+    assert "Disallow: /" in client.get("/robots.txt").text
+
+
+def test_cache_nuxt(client, tmp_path):
+    SEEN["nuxt"] = 0
+    for _ in range(3):
+        r = client.get("/_nuxt/abc.js")
+        assert r.text == f'fetch("{PUBLIC}/a")'
+    assert SEEN["nuxt"] == 1
+    assert (tmp_path / "abc.js").read_text() == 'fetch("https://www.8a.nu/a")'
+    client.get("/_nuxt/abc.js?v=1")
+    assert SEEN["nuxt"] == 2
