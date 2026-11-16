@@ -1,8 +1,33 @@
 # 8anu-proxy
 
 Proxy inverso de [8a.nu](https://www.8a.nu). Cambiando `www.8a.nu` por `8a.adrianlzt.com` en cualquier URL se ve
-la misma página, servida desde el proxy. Por ahora no cambia nada del contenido: es la base para añadirle cosas,
-como el [de theCrag](https://github.com/adrianlzt/thecrag-proxy), del que copia el enfoque.
+la misma página, servida desde el proxy (copia el enfoque del [de theCrag](https://github.com/adrianlzt/thecrag-proxy)),
+con un añadido: **condiciones para escalar** en la pestaña «Conditions» de cada escuela.
+
+## Condiciones
+
+En `/crags/<cat>/<país>/<escuela>/conditions` (la pestaña «Conditions», que en 8a.nu es de pago) el proxy pinta su
+propia página de condiciones: próximos 7 días y 5 pasados, tiempo hora a hora, mejor ventana de 3 horas, gráfica de
+puntuación, sol en la pared, «por qué estas condiciones», preferencias, webcams y «Know this crag?». También está
+suelta en `/_proxy/conditions/<cat>/<país>/<escuela>`.
+
+- **Frontend**: `app/static/conditions.{js,css}`, inyectados en todo el HTML de 8a.nu. El JS espera a que Vue hidrate
+  la página (si entra antes, Vue se queda el div) y se mete en `.crags-column-center` bajo la cabecera de la escuela,
+  escondiendo el muro de «Log in» si lo hay. Las preferencias (rango de temperatura, unidades) van en `localStorage`.
+- **Datos** (`GET /_proxy/conditions/…/data?tmin=&tmax=`, `app/conditions_api.py`): la escuela y sus sectores de la API
+  pública de 8a.nu (`/api/unification/outdoor/v1/web/crags/…`, sin sesión: coordenadas, sectores, `rainSafety`,
+  temporada); el tiempo de [Open-Meteo](https://open-meteo.com) (horario, 5 días atrás + 8 adelante, caché 30 min).
+- **Orientación de la pared**: la que haya puesto el usuario en «Know this crag?» (`POST …/aspect`, también por
+  sector) o, si no, estimada por el relieve: elevaciones de Open-Meteo en 16 rumbos a 60–300 m; la pared mira al lado
+  contrario de donde más sube el terreno (`rays_aspect`). Es una estimación (las coordenadas de 8a.nu no siempre
+  están en la pared) y la página lo dice.
+- **Sol en la pared**: posición del sol (NOAA) cada 5 min; hay sol si está a más de 3° y por delante de la pared. La
+  incertidumbre (±) es la diferencia con la orientación ±15°. No tiene en cuenta el horizonte (montañas).
+- **Puntuación v1** (`app/conditions.py`), por horas, 0–100 → Great ≥80, Good ≥65, OK ≥45, Bad: temperatura de la
+  roca (aire + sol directo − viento) respecto al rango del usuario × humedad × viento, con roca mojada según un
+  balance de lluvia y secado hora a hora (sol, viento, humedad; en escuelas `rainSafety` la lluvia moja menos). Son
+  reglas a mano; ajustarla con las fechas de las ascensiones (como hace 8a.nu) queda para una v2.
+- **Datos del usuario**: orientaciones y webcams en SQLite (`~/.local/share/8anu-proxy/data.db`, `DATA_DIR`).
 
 ## Cómo funciona
 

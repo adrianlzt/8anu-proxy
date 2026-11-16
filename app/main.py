@@ -26,6 +26,8 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route
 
+from . import conditions_api
+
 UPSTREAM = os.environ.get("UPSTREAM", "https://www.8a.nu").rstrip("/")
 # Keycloak de Vertical-Life: sus rutas empiezan todas por /auth/, que en www.8a.nu no existe (404).
 AUTH_UPSTREAM = os.environ.get("AUTH_UPSTREAM", "https://vlatka.vertical-life.info").rstrip("/")
@@ -286,6 +288,8 @@ async def proxy(request: Request) -> Response:
         headers = [h for h in headers if h[0] != b"content-type"]
         ctype = re.sub(r";\s*charset=[\w-]+", "", upstream.header("content-type"), flags=re.I)
         headers.append((b"content-type", f"{ctype}; charset=utf-8".encode()))
+    if upstream.header("content-type").startswith("text/html"):
+        content = conditions_api.inject(content)
     if request.method == "HEAD":
         content = b""
     resp = Response(content, status_code=upstream.status)
@@ -296,10 +300,12 @@ async def proxy(request: Request) -> Response:
 @asynccontextmanager
 async def lifespan(app: Starlette):
     app.state.sessions = {}
+    app.state.plain = AsyncSession(timeout=20)
     app.state.sem = asyncio.Semaphore(MAX_CONCURRENCY)
     try:
         yield
     finally:
+        await app.state.plain.close()
         for session in app.state.sessions.values():
             await session.close()
 
@@ -309,6 +315,7 @@ app = Starlette(
     routes=[
         Route("/robots.txt", robots),
         Route("/_proxy/healthz", healthz),
+        *conditions_api.routes,
         Route("/{path:path}", proxy, methods=METHODS),
     ],
     lifespan=lifespan,
