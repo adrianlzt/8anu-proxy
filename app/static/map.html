@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Crag conditions map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <link rel="stylesheet" href="/_proxy/static/map.css">
+  <script src="/_proxy/static/map.js" defer></script>
+</head>
+<body>
+  <header class="m-top">
+    <a href="/" class="m-home">8a</a>
+    <h1>Crag conditions</h1>
+    <button id="m-filters-btn" type="button">Filters</button>
+  </header>
+  <div id="m-days" class="m-days"></div>
+  <form id="m-filters" class="m-filters" hidden>
+    <label>Style <select name="cat"><option value="0">Sport</option><option value="1">Boulder</option><option value="">Both</option></select></label>
+    <label>Grades <span><select name="gfrom"></select> – <select name="gto"></select></span></label>
+    <label>Min. routes <input name="routes" type="number" min="0" step="10" value="20"></label>
+    <label>Min. rating <select name="rating"><option value="0">Any</option><option value="3">★ 3+</option><option value="3.5">★ 3.5+</option><option value="4">★ 4+</option></select></label>
+    <label>Conditions <select name="cond"><option value="">Any</option><option value="ok">OK or better</option><option value="good">Good or better</option><option value="great">Great</option></select></label>
+    <label>Search <input name="q" type="search" placeholder="crag or area"></label>
+    <p class="m-muted">Your ideal temperature comes from the crag Conditions page (Your preferences).</p>
+  </form>
+  <div id="m-map" class="m-map"></div>
+  <div id="m-status" class="m-status"></div>
+  <ol id="m-list" class="m-list"></ol>
+</body>
+</html>

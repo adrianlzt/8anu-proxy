@@ -183,7 +183,7 @@ async def standalone(request: Request) -> Response:
 
 async def static(request: Request) -> Response:
     name = request.path_params["name"]
-    if name not in ("conditions.js", "conditions.css"):
+    if name not in ("conditions.js", "conditions.css", "map.js", "map.css"):
         return PlainTextResponse("no", status_code=404)
     return FileResponse(STATIC / name, headers={"cache-control": "no-cache"})
 

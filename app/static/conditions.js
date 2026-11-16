@@ -161,7 +161,8 @@
     const sym = n.state === "Dark" ? "☾" : n.state === "Sun" ? "☀" : "◐";
     return `<div class="nuc-head"><span class="nuc-crag">${esc(d.crag.name)}</span>
       <span class="nuc-pill nuc-c-${n.cat}">${sym} ${T(n.temp)}° · ${esc(n.state)}</span>
-      <span class="nuc-now">Rock ${esc(n.rock)} · ${n.rh} % · ${W(n.wind)}</span></div>`;
+      <span class="nuc-now">Rock ${esc(n.rock)} · ${n.rh} % · ${W(n.wind)}</span>
+      <a class="nuc-link nuc-maplink" href="/_proxy/map#${d.crag.lat},${d.crag.lon},10">🗺 Conditions map</a></div>`;
   }
 
   function seg(name, opts, cur) {

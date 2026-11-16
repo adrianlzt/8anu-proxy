@@ -22,11 +22,13 @@ from pathlib import Path
 
 from curl_cffi.requests import AsyncSession
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route
 
-from . import conditions_api
+from . import conditions_api, map_api
 
 UPSTREAM = os.environ.get("UPSTREAM", "https://www.8a.nu").rstrip("/")
 # Keycloak de Vertical-Life: sus rutas empiezan todas por /auth/, que en www.8a.nu no existe (404).
@@ -316,7 +318,10 @@ app = Starlette(
         Route("/robots.txt", robots),
         Route("/_proxy/healthz", healthz),
         *conditions_api.routes,
+        *map_api.routes,
         Route("/{path:path}", proxy, methods=METHODS),
     ],
     lifespan=lifespan,
+    # El JSON del mapa (~4600 escuelas) y el HTML de 8a.nu se comprimen hacia el móvil.
+    middleware=[Middleware(GZipMiddleware, minimum_size=2000)],
 )

@@ -23,10 +23,20 @@ suelta en `/_proxy/conditions/<cat>/<país>/<escuela>`.
   están en la pared) y la página lo dice.
 - **Sol en la pared**: posición del sol (NOAA) cada 5 min; hay sol si está a más de 3° y por delante de la pared. La
   incertidumbre (±) es la diferencia con la orientación ±15°. No tiene en cuenta el horizonte (montañas).
-- **Puntuación v1** (`app/conditions.py`), por horas, 0–100 → Great ≥80, Good ≥65, OK ≥45, Bad: temperatura de la
-  roca (aire + sol directo − viento) respecto al rango del usuario × humedad × viento, con roca mojada según un
-  balance de lluvia y secado hora a hora (sol, viento, humedad; en escuelas `rainSafety` la lluvia moja menos). Son
-  reglas a mano; ajustarla con las fechas de las ascensiones (como hace 8a.nu) queda para una v2.
+- **Puntuación v2** (`app/conditions.py`, ideas de [SendScore](https://www.sendscore.info/thescore)), por horas,
+  0–100 → Great ≥80, Good ≥65, OK ≥45, Bad. Se simula la roca hora a hora: temperatura con inercia (~3 h; sol en la
+  pared, aire, viento, enfriamiento nocturno con cielo despejado), humedad acumulada (lluvia × absorción del tipo de
+  roca —el de 8a.nu, `ROCKS`— × abrigo si es `rainSafety`; condensación cuando la roca está por debajo del punto de
+  rocío; secado por sol, viento y aire seco) y viento efectivo (entero si sopla de cara a la pared, un tercio de
+  espaldas; rachas). Factores 0–1 (temperatura sentida respecto al rango del usuario, humedad, viento, sol, rocío,
+  roca mojada, lluvia y su probabilidad, luz) multiplicados. El día vale la **peor hora de su mejor ventana de 3 h**.
+  «Why these conditions?» enseña cada factor con una barra. Las preferencias tienen estilo (deportiva 12–22 °C,
+  bloque 4–14 °C por defecto). No está ajustada con ascensiones.
+- **Mapa** (`/_proxy/map`, `app/map_api.py`, `static/map.*`, enlace «🗺 Conditions map» en cada página de
+  condiciones): las ~9500 escuelas de 8a.nu (`/api/dotnet/crags/map` con un recuadro del mundo: coordenadas y rango
+  de grados; caché 1 día) en un mapa Leaflet/OSM, filtrables por estilo, grados, número de vías, valoración,
+  condiciones y nombre, con selector de día. Las condiciones se calculan para las escuelas visibles (hasta 60, las
+  más escaladas) con una sola llamada a Open-Meteo; la orientación es la guardada o, si no hay, sur supuesto.
 - **Datos del usuario**: orientaciones y webcams en SQLite (`~/.local/share/8anu-proxy/data.db`, `DATA_DIR`).
 
 ## Cómo funciona
