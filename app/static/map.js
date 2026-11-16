@@ -69,6 +69,36 @@
   const map = L.map("m-map", { preferCanvas: true }).setView(view.c, view.z);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap" }).addTo(map);
 
+  // Al abrir (salvo que venga un #lat,lon de una escuela) se centra en el usuario mostrando ~100 km alrededor; el botón
+  // ◎ lo vuelve a hacer. Mientras el navegador da la posición se ve la última vista.
+  const RADIUS_M = 100000;
+  let me = null;
+  function locate(manual) {
+    if (!navigator.geolocation) { if (manual) alert("Location not available in this browser"); return; }
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+      if (me) me.setLatLng(ll); else me = L.circleMarker(ll, { radius: 7, color: "#fff", weight: 3, fillColor: "#1a73e8", fillOpacity: 1 }).addTo(map).bindTooltip("You");
+      // El zoom en el que el lado corto del mapa abarca ~2×RADIUS (con zoom entero, fitBounds se queda uno más lejos).
+      const px = Math.min(map.getSize().x, map.getSize().y);
+      const mPerPx = (2 * RADIUS_M) / px;
+      const z = Math.round(Math.log2((156543 * Math.cos((ll.lat * Math.PI) / 180)) / mPerPx));
+      map.setView(ll, Math.max(5, Math.min(12, z)));
+    }, (err) => {
+      if (manual) alert(`Couldn't get your location: ${err.message}`);
+    }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 10 * 60 * 1000 });
+  }
+  const LocateCtl = L.Control.extend({
+    options: { position: "topleft" },
+    onAdd() {
+      const b = L.DomUtil.create("a", "leaflet-bar m-locate");
+      b.href = "#"; b.title = "Show crags around me"; b.textContent = "◎";
+      L.DomEvent.on(b, "click", (e) => { L.DomEvent.stop(e); locate(true); });
+      return b;
+    },
+  });
+  map.addControl(new LocateCtl());
+  if (!(hash.length >= 2 && hash.every((x) => !isNaN(x)))) locate(false);
+
   // Cada grupo: un círculo partido, mitad con la mejor condición de sus escuelas y mitad con la peor, y el número.
   const clusters = L.markerClusterGroup({
     maxClusterRadius: 50, showCoverageOnHover: false, chunkedLoading: true,
