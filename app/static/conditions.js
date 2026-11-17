@@ -491,7 +491,33 @@
     a.textContent = "🗺 Conditions map";
     document.body.appendChild(a);
   }
-  function tick() { try { if (hydrated()) { mapButton(); mount(); } } catch (e) { console.warn("nuc", e); } }
+  // En las escuelas que 8a.nu no tiene marcadas con condiciones no sale su chip «24° · OK» en la cabecera ni la
+  // pestaña. Las nuestras valen para cualquier escuela con coordenadas: se pone un chip propio que lleva a ellas.
+  const CRAG_PATH = /^\/crags\/(sportclimbing|bouldering)\/([a-z0-9-]+)\/([a-z0-9-]+)(\/|$)/;
+  const chipInfo = {};
+  function cragChip() {
+    const m = location.pathname.match(CRAG_PATH);
+    if (!m || ROUTE.test(location.pathname)) return;
+    const hdr = Array.from(document.querySelectorAll(".crag-mobile-header, .crag-header")).find((h) => h.offsetWidth > 0);
+    if (!hdr || hdr.querySelector(".conditions-chip, .conditions-mobile-chip, .nuc-chip")) return;
+    const key = m.slice(1, 4).join("/");
+    const a = document.createElement("a");
+    a.className = "nuc-chip";
+    a.href = `/crags/${key}/conditions`;
+    a.textContent = chipInfo[key] || "☁ Conditions";
+    const trigger = hdr.querySelector(".crag-mobile-header__trigger");
+    (trigger && trigger.parentElement === hdr ? trigger : hdr.lastElementChild || hdr).after(a);
+    if (!chipInfo[key]) {
+      chipInfo[key] = "☁ Conditions";
+      const p = prefs();
+      fetch(`/_proxy/conditions/${key}/data?tmin=${p.tmin}&tmax=${p.tmax}`).then((r) => r.json()).then((d) => {
+        if (!d.now) return;
+        chipInfo[key] = `${d.now.state === "Dark" ? "☾" : d.now.state === "Sun" ? "☀" : "☁"} ${T(d.now.temp)}° · ${CAT_LABEL[d.days[d.today].cat]}`;
+        document.querySelectorAll(".nuc-chip").forEach((c) => (c.textContent = chipInfo[key]));
+      }).catch(() => {});
+    }
+  }
+  function tick() { try { if (hydrated()) { mapButton(); cragChip(); mount(); } } catch (e) { console.warn("nuc", e); } }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tick); else tick();
   setInterval(tick, 500);
 })();

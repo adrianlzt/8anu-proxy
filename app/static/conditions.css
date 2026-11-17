@@ -193,3 +193,5 @@ body.nuc-standalone #nuc-root { max-width: 720px; margin: 0 auto; padding: 0 0 2
 .nuc .mg-models thead, .nuc .mg-models thead tr, .nuc .mg-models thead th { background: #fff !important; color: #1d1d1b !important; }
 .nuc .mg-models thead th { font-weight: 700; font-size: 13px; border-bottom: 2px solid #d9d9d3; }
 .nuc .mg-models tbody th { position: sticky; left: 0; background: #fff; z-index: 1; }
+.nuc-chip { display: inline-flex; align-items: center; margin-left: 10px; padding: 4px 12px; border: 1.5px solid #8b1d8b;
+  border-radius: 999px; color: #8b1d8b; text-decoration: none; font: 600 15px/1.2 system-ui, sans-serif; white-space: nowrap; }
