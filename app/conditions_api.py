@@ -18,11 +18,12 @@ from starlette.routing import Route
 
 from . import aspect
 from . import conditions as cond
+from . import meteo
 from . import store
 
 STATIC = Path(__file__).parent / "static"
 SLUG = re.compile(r"[a-z0-9-]{1,120}")
-INJECT = b'<link rel="stylesheet" href="/_proxy/static/conditions.css"><script src="/_proxy/static/conditions.js" defer></script></head>'
+INJECT = b'<link rel="stylesheet" href="/_proxy/static/conditions.css"><script src="/_proxy/static/meteo.js" defer></script><script src="/_proxy/static/conditions.js" defer></script></head>'
 
 _cache = cond.Cache()
 _locks: dict[str, asyncio.Lock] = {}
@@ -130,6 +131,20 @@ async def conditions_json(request: Request) -> Response:
     return JSONResponse(data, headers={"cache-control": "no-store"})
 
 
+async def meteo_json(request: Request) -> Response:
+    """Meteorología detallada (sección plegada): meteograma, ensemble, modelos y avisos. Ver app/meteo.py."""
+    key = _key(request)
+    if not key:
+        return JSONResponse({"error": "bad crag"}, status_code=400)
+    try:
+        crag, _, _ = await _crag(request.app, key)
+        lat, lon = crag["location"]["latitude"], crag["location"]["longitude"]
+        data = await meteo.detail(request.app, key, lat, lon)
+    except (LookupError, RuntimeError) as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    return JSONResponse(data, headers={"cache-control": "no-store"})
+
+
 async def set_aspect(request: Request) -> Response:
     key = _key(request)
     if not key:
@@ -170,7 +185,7 @@ async def standalone(request: Request) -> Response:
 
 async def static(request: Request) -> Response:
     name = request.path_params["name"]
-    if name not in ("conditions.js", "conditions.css", "map.js", "map.css"):
+    if name not in ("conditions.js", "conditions.css", "meteo.js", "map.js", "map.css"):
         return PlainTextResponse("no", status_code=404)
     return FileResponse(STATIC / name, headers={"cache-control": "no-cache"})
 
@@ -178,6 +193,7 @@ async def static(request: Request) -> Response:
 CRAG = "{cat}/{country}/{crag}"
 routes = [
     Route(f"/_proxy/conditions/{CRAG}/data", conditions_json),
+    Route(f"/_proxy/conditions/{CRAG}/meteo", meteo_json),
     Route(f"/_proxy/conditions/{CRAG}/aspect", set_aspect, methods=["POST"]),
     Route(f"/_proxy/conditions/{CRAG}/webcams", add_webcam, methods=["POST"]),
     Route(f"/_proxy/conditions/{CRAG}", standalone),

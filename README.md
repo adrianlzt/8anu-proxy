@@ -32,6 +32,15 @@ suelta en `/_proxy/conditions/<cat>/<país>/<escuela>`.
   roca mojada, lluvia y su probabilidad, luz) multiplicados. El día vale la **peor hora de su mejor ventana de 3 h**.
   «Why these conditions?» enseña cada factor con una barra. Las preferencias tienen estilo (deportiva 12–22 °C,
   bloque 4–14 °C por defecto). No está ajustada con ascensiones.
+- **Meteorología detallada** (`app/meteo.py`, `static/meteo.js`, `GET …/meteo`): tarjeta plegada al final de la página
+  de condiciones; solo se pide al abrirla (y se recuerda abierta). Avisos por día (tormentas: CAPE ≥800 J/kg con
+  índice de elevación ≤−2; isocero a menos de 300 m de la altitud de la escuela; niebla: visibilidad <1 km de día;
+  rachas ≥60 km/h; UV ≥8; calor ≥32 °C), tendencia de presión y poder de secado (déficit de presión de vapor);
+  meteograma SVG de 72 h por paneles (temperatura con la banda p10–p90 del ensemble de ECMWF de 51 miembros, punto de
+  rocío, lluvia con su p90 y la probabilidad del ensemble, nubes bajas/medias/altas, viento, rachas y dirección, VPD;
+  al tocar enseña todos los valores de esa hora); tabla por día de ECMWF IFS, ICON, GFS, Météo-France (AROME 1,3 km en
+  el norte de España) y UKMO con su grado de acuerdo; radar de lluvia en directo (RainViewer, Leaflet cargado a
+  demanda). Caché de 30 min por escuela; tres llamadas a Open-Meteo al abrirla.
 - **Mapa** (`/_proxy/map`, `app/map_api.py`, `static/map.*`, enlace «🗺 Conditions map» en cada página de
   condiciones): las ~13 800 escuelas de 8a.nu con su histograma de vías por grado (API del mapa de 8a.nu,
   `collection/v1/web/map/items`, pedida por recuadros que se parten en cuatro cuando se llenan, porque la segunda

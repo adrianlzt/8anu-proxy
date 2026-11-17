@@ -151,7 +151,8 @@
     if (state.loading && !state.data) { root.innerHTML = '<div class="nuc-card nuc-pad">Loading conditions…</div>'; return; }
     if (state.error) { root.innerHTML = `<div class="nuc-card nuc-pad">Couldn't load conditions: ${esc(state.error)}</div>`; return; }
     const d = state.data;
-    root.innerHTML = [header(d), daysCard(d), bestTime(d), scoreCard(d), sunCard(d), whyCard(d), prefsCard(), webcamsCard(d), knowCard(d),
+    root.innerHTML = [header(d), daysCard(d), bestTime(d), scoreCard(d), sunCard(d), whyCard(d),
+      window.NucMeteo ? window.NucMeteo.card(state.key, d.crag) : "", prefsCard(), webcamsCard(d), knowCard(d),
       `<a href="#" class="nuc-link nuc-official" data-official="1">${state.showOfficial ? "Hide" : "Show"} 8a.nu's version</a>`].join("");
     bind(root);
   }
@@ -414,6 +415,7 @@
   // --- Eventos ---------------------------------------------------------------------------------------------------------
 
   function bind(root) {
+    if (window.NucMeteo && state.data) window.NucMeteo.bind(root, state.key, state.data.crag, render);
     const on = (sel, fn) => root.querySelectorAll(sel).forEach((b) => b.addEventListener("click", (e) => fn(b, e)));
     on("[data-mode]", (b) => {
       state.mode = b.dataset.mode;

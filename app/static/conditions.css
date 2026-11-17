@@ -152,3 +152,40 @@ body.nuc-standalone #nuc-root { max-width: 720px; margin: 0 auto; padding: 0 0 2
 #nuc-mapbtn { position: fixed; left: 12px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 2147483000;
   background: #8b1d8b; color: #fff; text-decoration: none; font: 600 14px/1 system-ui, sans-serif; padding: 10px 14px;
   border-radius: 999px; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+
+/* Meteorología detallada (meteo.js) */
+.mg-toggle { width: 100%; border: 0; background: none; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.mg-toggle span { color: var(--nuc-accent); font-size: 14px; }
+.mg { width: 100%; height: auto; display: block; margin-top: 8px; touch-action: manipulation; }
+.mg-night { fill: #1d1d1b; opacity: .06; }
+.mg-day { stroke: #9a9a94; stroke-width: 1; }
+.mg-grid { stroke: #e7e7e2; stroke-width: 1; }
+.mg-zero { stroke: #4f97a3; stroke-dasharray: 3 3; }
+.mg-lbl { font-size: 12px; fill: #44443f; font-weight: 600; }
+.mg-ax { font-size: 10px; fill: #6b6b66; }
+.mg-ppax { fill: #8b1d8b; }
+.mg-title { font-size: 11px; fill: #44443f; font-weight: 600; }
+.mg-band { fill: #f6c9cf; opacity: .8; }
+.mg-temp { fill: none; stroke: #e0475e; stroke-width: 2.2; }
+.mg-dew { fill: none; stroke: #4f97a3; stroke-width: 1.6; stroke-dasharray: 4 3; }
+.mg-rain { fill: #3d7fb8; }
+.mg-p90 { fill: #b9d4ea; }
+.mg-pp { fill: none; stroke: #8b1d8b; stroke-width: 1.6; }
+.mg-wind { fill: none; stroke: #6b6b66; stroke-width: 2; }
+.mg-gust { fill: none; stroke: #6b6b66; stroke-width: 1; stroke-dasharray: 2 3; }
+.mg-arrow { fill: #44443f; }
+.mg-vpd { fill: #e3a33a; }
+.mg-sel { stroke: #1d1d1b; stroke-width: 1.5; }
+.mg-info { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; margin-top: 8px; padding: 8px 10px; background: #fafaf7; border: 1px solid var(--nuc-border); border-radius: 8px; }
+.mg-info b { width: 100%; }
+.mg-risks { list-style: none; padding: 0; margin: 6px 0; }
+.mg-risks li { padding: 6px 10px; border-radius: 6px; margin: 4px 0; font-size: 14px; }
+.mg-r-medium { background: #fff3cf; }
+.mg-r-high { background: #fadbe0; }
+.mg-ok { color: var(--nuc-great); }
+.mg-scroll { overflow-x: auto; }
+.mg-models { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+.mg-models th, .mg-models td { padding: 5px 6px; border-bottom: 1px solid #efefea; text-align: center; white-space: nowrap; }
+.mg-models th:first-child { text-align: left; }
+.mg-models small { color: #3d7fb8; }
+.mg-radar { height: 300px; border-radius: 8px; margin-top: 6px; }
