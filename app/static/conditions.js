@@ -482,14 +482,32 @@
     if (!readySince) readySince = Date.now();
     return Date.now() - readySince > 800;
   }
-  // Botón flotante al mapa de condiciones en todas las páginas de 8a.nu (fuera del árbol de Vue, en <body>).
+  // Acceso al mapa de condiciones: botón flotante solo en la portada (en el resto pisaba contenido) y, siempre, una
+  // entrada «Conditions map» en el menú lateral de 8a.nu, debajo de «Premium» (copia de su .menu-item).
   function mapButton() {
-    if (document.body.classList.contains("nuc-standalone") || document.getElementById("nuc-mapbtn")) return;
+    const btn = document.getElementById("nuc-mapbtn");
+    if (document.body.classList.contains("nuc-standalone") || location.pathname !== "/") { if (btn) btn.remove(); return; }
+    if (btn) return;
     const a = document.createElement("a");
     a.id = "nuc-mapbtn";
     a.href = "/_proxy/map";
     a.textContent = "🗺 Conditions map";
     document.body.appendChild(a);
+  }
+  function menuEntry() {
+    for (const item of document.querySelectorAll(".menu-item")) {
+      if ((item.textContent || "").trim() !== "Premium" || !item.offsetWidth) continue;
+      const next = item.nextElementSibling;
+      if (next && next.classList.contains("nuc-menu-map")) continue;
+      const copy = item.cloneNode(true);
+      copy.classList.add("nuc-menu-map");
+      copy.removeAttribute("id");
+      const leaf = Array.from(copy.querySelectorAll("*")).reverse().find((el) => (el.textContent || "").trim() === "Premium") || copy;
+      leaf.textContent = "Conditions map";
+      copy.querySelectorAll("a").forEach((a) => { a.href = "/_proxy/map"; a.removeAttribute("target"); });
+      copy.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); location.href = "/_proxy/map"; }, true);
+      item.after(copy);
+    }
   }
   // En las escuelas que 8a.nu no tiene marcadas con condiciones no sale su chip «24° · OK» en la cabecera ni la
   // pestaña. Las nuestras valen para cualquier escuela con coordenadas: se pone un chip propio que lleva a ellas.
@@ -517,7 +535,7 @@
       }).catch(() => {});
     }
   }
-  function tick() { try { if (hydrated()) { mapButton(); cragChip(); mount(); } } catch (e) { console.warn("nuc", e); } }
+  function tick() { try { if (hydrated()) { mapButton(); menuEntry(); cragChip(); mount(); } } catch (e) { console.warn("nuc", e); } }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tick); else tick();
   setInterval(tick, 500);
 })();
