@@ -36,3 +36,14 @@ def test_avisos_tormenta_y_helada():
     h["freezing_level_height"][6] = 900
     kinds = {r["kind"] for r in meteo.risks(h, elevation=800)}
     assert kinds == {"storm", "freeze"}
+
+
+def test_viento_por_modelo():
+    times = [f"2026-11-17T{h:02d}:00" for h in range(24)]
+    key = "ecmwf_ifs025"
+    hourly = {"time": times, f"temperature_2m_{key}": [10] * 24, f"precipitation_{key}": [0] * 24,
+              f"wind_speed_10m_{key}": [10] * 24, f"wind_gusts_10m_{key}": [20] * 23 + [90],
+              f"wind_direction_10m_{key}": [350] * 12 + [10] * 12}
+    d = meteo.model_days(hourly)["models"]["ECMWF"][0]
+    assert d["wind"] == 10 and d["gust"] == 20  # la racha de las 23 h queda fuera de 8–20 h
+    assert d["wind_dir"] in (0, 360) or d["wind_dir"] < 5 or d["wind_dir"] > 355  # media vectorial de 350° y 10°: norte

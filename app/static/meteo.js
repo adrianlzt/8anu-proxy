@@ -26,6 +26,8 @@
     rerender();
   }
 
+  const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  const compass = (deg) => (deg == null ? "" : COMPASS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16]);
   function dayName(date) { const d = new Date(date + "T12:00"); return `${DAYN[d.getDay()]} ${d.getDate()}`; }
 
   // --- Meteograma -------------------------------------------------------------------------------------------------
@@ -113,7 +115,12 @@
     const m = d.models, names = Object.keys(m.models);
     const rows = m.dates.map((date, i) => {
       const a = m.agreement[i];
-      const cells = names.map((nm) => { const v = m.models[nm][i]; return `<td>${v ? `${v.tmax}°/${v.tmin}°<br><small>${v.rain == null ? "–" : v.rain + " mm"}</small>` : "–"}</td>`; }).join("");
+      const cells = names.map((nm) => {
+        const v = m.models[nm][i];
+        if (!v) return "<td>–</td>";
+        const wind = v.wind == null ? "" : `<br><span class="mg-wind-cell" title="Wind 8–20 h: mean, max gust, from ${compass(v.wind_dir)}"><i style="transform:rotate(${v.wind_dir + 180}deg)">↑</i>${v.wind}${v.gust != null ? `<b>${v.gust}</b>` : ""} <em>${compass(v.wind_dir)}</em></span>`;
+        return `<td>${v.tmax}°/${v.tmin}°<br><small>${v.rain == null ? "–" : v.rain + " mm"}</small>${wind}</td>`;
+      }).join("");
       const badge = a ? `<span class="nuc-badge nuc-c-${AGREE[a.level][1]}" title="Max temp spread ${a.tspread}°, ${a.wet_models}/${a.models} models with ≥1 mm">${AGREE[a.level][0]}</span>` : "";
       return `<tr><th>${dayName(date)}</th>${cells}<td>${badge}</td></tr>`;
     }).join("");
@@ -139,7 +146,7 @@
           <div class="nuc-pad"><h3>Meteogram · next 72 h</h3>${meteogram(d)}${hourInfo(d)}
           <div class="nuc-legend"><span><i style="background:#e0475e"></i>Temperature</span><span><i style="background:#4f97a3"></i>Dew point</span><span><i style="background:#f6c9cf"></i>Ensemble 10–90 %</span><span><i style="background:#3d7fb8"></i>Rain</span><span><i style="background:#b9d4ea"></i>Rain (wet members 90 %)</span><span><i style="background:#8b1d8b"></i>Chance</span><span><i style="background:#6b6b66"></i>Wind / gusts</span><span><i style="background:#e3a33a"></i>Drying power</span></div></div>
           <div class="nuc-pad"><h3>What each model says</h3>${modelsTable(d)}
-          <p class="nuc-muted">Max/min temperature and rain per day. Météo-France uses AROME (1.3 km) where it reaches, which includes northern Spain, and ARPEGE elsewhere.</p></div>
+          <p class="nuc-muted">Max/min temperature and rain per day; wind from 8 to 20 h: mean km/h, <b>max gust</b> and where it comes from (the arrow points where it blows). Météo-France uses AROME (1.3 km) where it reaches, which includes northern Spain, and ARPEGE elsewhere.</p></div>
           <div class="nuc-pad"><h3>Rain radar</h3>${st.radar ? `<div id="mg-radar" class="mg-radar"></div><p class="nuc-muted" id="mg-radar-t"></p>` : `<button type="button" class="nuc-outline" data-radar="1">Show live rain radar</button>`}</div>
           <p class="nuc-pad nuc-muted">Open-Meteo (ECMWF IFS, ICON, GFS, Météo-France AROME/ARPEGE, UKMO; ECMWF ensemble with ${d.ensemble.members} members), temperatures corrected to the crag's altitude · radar RainViewer.</p>`;
       }

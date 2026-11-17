@@ -5,11 +5,13 @@
 - Incertidumbre: el ensemble de ECMWF (51 miembros) da la banda de temperatura p10–p90 y la probabilidad de lluvia de
   cada hora.
 - Modelos: ECMWF IFS, ICON (DWD), GFS (NOAA), Météo-France (AROME 1,3 km donde llega, que incluye el norte de España;
-  ARPEGE fuera) y UKMO. Resumen por día de cada uno y lo que se parecen.
+  ARPEGE fuera) y UKMO. Resumen por día de cada uno (temperaturas, lluvia y viento de 8 a 20 h: medio, racha máxima y
+  dirección dominante) y lo que se parecen.
 - Avisos: tormentas, helada/nieve (isocero cerca de la altitud de la escuela), niebla, rachas fuertes, UV alto y calor.
 Todo de Open-Meteo, que ya corrige la temperatura por la altitud del punto (modelo digital del terreno de 90 m).
 """
 
+import math
 import statistics
 import time
 from urllib.parse import urlencode
@@ -67,6 +69,25 @@ def ensemble_stats(hourly: dict) -> dict:
     return out
 
 
+def _wind(hourly: dict, key: str, idx: list[int]) -> dict:
+    """Viento de un modelo en las horas de escalada (8–20 h): medio, racha máxima y dirección dominante (media
+    vectorial pesada por la velocidad, de donde viene)."""
+    sp = hourly.get(f"wind_speed_10m_{key}") or []
+    gu = hourly.get(f"wind_gusts_10m_{key}") or []
+    di = hourly.get(f"wind_direction_10m_{key}") or []
+    pairs = [(sp[i], di[i]) for i in idx if i < len(sp) and i < len(di) and sp[i] is not None and di[i] is not None]
+    gusts = [gu[i] for i in idx if i < len(gu) and gu[i] is not None]
+    if not pairs:
+        return {}
+    vx = sum(v * math.sin(math.radians(d)) for v, d in pairs)
+    vy = sum(v * math.cos(math.radians(d)) for v, d in pairs)
+    return {
+        "wind": round(sum(v for v, _ in pairs) / len(pairs)),
+        "gust": round(max(gusts)) if gusts else None,
+        "wind_dir": round(math.degrees(math.atan2(vx, vy)) % 360),
+    }
+
+
 def model_days(hourly: dict) -> dict:
     """Por modelo y día: máxima, mínima y lluvia. Y por día, cuánto se parecen (dispersión de máximas y de lluvia)."""
     times = hourly["time"]
@@ -84,7 +105,9 @@ def model_days(hourly: dict) -> dict:
             if len(ts) < 20:
                 days.append(None)
                 continue
-            days.append({"tmax": round(max(ts)), "tmin": round(min(ts)), "rain": round(sum(ps), 1) if ps else None})
+            day = {"tmax": round(max(ts)), "tmin": round(min(ts)), "rain": round(sum(ps), 1) if ps else None}
+            day.update(_wind(hourly, key, [i for i in idx if 8 <= int(times[i][11:13]) < 20]))
+            days.append(day)
         per_model[name] = days
     agreement = []
     for i in range(len(dates)):
@@ -145,7 +168,8 @@ async def detail(app, key: str, lat: float, lon: float) -> dict:
     main = await _get(app, f"{cond.OPEN_METEO}/forecast", {**base, "hourly": DETAIL, "forecast_days": 4})
     ens = await _get(app, ENSEMBLE, {**base, "hourly": "temperature_2m,precipitation", "models": "ecmwf_ifs025",
                                      "forecast_days": 4})  # fmt: skip
-    multi = await _get(app, f"{cond.OPEN_METEO}/forecast", {**base, "hourly": "temperature_2m,precipitation",
+    multi = await _get(app, f"{cond.OPEN_METEO}/forecast", {**base, "hourly": "temperature_2m,precipitation,"
+                                                            "wind_speed_10m,wind_gusts_10m,wind_direction_10m",
                                                             "models": ",".join(MODELS), "forecast_days": 7})  # fmt: skip
     h = main["hourly"]
     # 72 h desde la hora actual (local de la escuela).
