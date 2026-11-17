@@ -189,3 +189,7 @@ body.nuc-standalone #nuc-root { max-width: 720px; margin: 0 auto; padding: 0 0 2
 .mg-models th:first-child { text-align: left; }
 .mg-models small { color: #3d7fb8; }
 .mg-radar { height: 300px; border-radius: 8px; margin-top: 6px; }
+/* 8a.nu pinta todos los thead de oscuro: la cabecera de la tabla de modelos necesita su propio estilo. */
+.nuc .mg-models thead, .nuc .mg-models thead tr, .nuc .mg-models thead th { background: #fff !important; color: #1d1d1b !important; }
+.nuc .mg-models thead th { font-weight: 700; font-size: 13px; border-bottom: 2px solid #d9d9d3; }
+.nuc .mg-models tbody th { position: sticky; left: 0; background: #fff; z-index: 1; }
