@@ -201,3 +201,6 @@ body.nuc-standalone #nuc-root { max-width: 720px; margin: 0 auto; padding: 0 0 2
 .mg-wind-cell b::before { content: "("; color: #6b6b66; font-weight: 400; }
 .mg-wind-cell b::after { content: ")"; color: #6b6b66; font-weight: 400; }
 .mg-wind-cell em { font-style: normal; color: #6b6b66; }
+#nuc-update { position: fixed; left: 50%; transform: translateX(-50%); top: calc(10px + env(safe-area-inset-top)); z-index: 2147483001;
+  background: #1d1d1b; color: #fff; border: 0; border-radius: 999px; padding: 10px 16px; font: 600 14px/1.2 system-ui, sans-serif;
+  box-shadow: 0 2px 10px rgba(0,0,0,.3); }

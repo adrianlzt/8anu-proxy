@@ -549,6 +549,29 @@
     (trigger && trigger.parentElement === hdr ? trigger : hdr.lastElementChild || hdr).after(a);
   }
   function tick() { try { if (hydrated()) { mapButton(); menuEntry(); cragChip(); mount(); } } catch (e) { console.warn("nuc", e); } }
+  // Versión nueva: la pestaña de 8a.nu puede llevar horas abierta sin recargar (es una SPA). Se mira al volver a ella
+  // y cada 5 min si el código del proxy ha cambiado y, si es así, se ofrece recargar.
+  const MY_VERSION = (document.currentScript && document.currentScript.dataset.nucVersion) ||
+    (document.querySelector("script[data-nuc-version]") || {}).dataset?.nucVersion;
+  let lastCheck = 0;
+  async function checkVersion() {
+    if (!MY_VERSION || Date.now() - lastCheck < 60000 || document.getElementById("nuc-update")) return;
+    lastCheck = Date.now();
+    try {
+      const r = await fetch("/_proxy/version", { cache: "no-store" });
+      const { v } = await r.json();
+      if (v && v !== MY_VERSION) {
+        const b = document.createElement("button");
+        b.id = "nuc-update";
+        b.type = "button";
+        b.textContent = "⟳ New version of the conditions · tap to reload";
+        b.addEventListener("click", () => location.reload());
+        document.body.appendChild(b);
+      }
+    } catch (e) { /* sin red: ya se mirará */ }
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkVersion(); });
+  setInterval(checkVersion, 5 * 60 * 1000);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tick); else tick();
   setInterval(tick, 500);
 })();

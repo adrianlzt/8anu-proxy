@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from . import aspect
@@ -214,7 +214,14 @@ async def conditions_json(request: Request) -> Response:
 
 
 async def page(_: Request) -> Response:
-    return FileResponse(STATIC / "map.html", headers={"cache-control": "no-cache"})
+    from .conditions_api import version
+
+    v = version()
+    html = (STATIC / "map.html").read_text()
+    html = html.replace("/_proxy/static/map.css", f"/_proxy/static/map.css?v={v}").replace(
+        "/_proxy/static/map.js", f"/_proxy/static/map.js?v={v}"
+    )
+    return HTMLResponse(html.replace("<body>", f'<body data-nuc-version="{v}">'), headers={"cache-control": "no-cache"})
 
 
 routes = [

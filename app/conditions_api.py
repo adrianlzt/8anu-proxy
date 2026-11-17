@@ -5,6 +5,7 @@ El widget (static/conditions.js) se inyecta en todas las páginas HTML de 8a.nu 
 """
 
 import asyncio
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -23,7 +24,27 @@ from . import store
 
 STATIC = Path(__file__).parent / "static"
 SLUG = re.compile(r"[a-z0-9-]{1,120}")
-INJECT = b'<link rel="stylesheet" href="/_proxy/static/conditions.css"><script src="/_proxy/static/meteo.js" defer></script><script src="/_proxy/static/conditions.js" defer></script></head>'
+STATIC_FILES = ("conditions.js", "conditions.css", "meteo.js", "map.js", "map.css", "map.html")
+
+
+def version() -> str:
+    """Huella de los ficheros estáticos (fecha y tamaño): cambia con cada cambio de código, aunque no se reinicie el
+    servicio (se sirven del disco). Va en las URLs (?v=) para saltarse la caché del navegador, y el JS la consulta en
+    /_proxy/version para avisar de que hay versión nueva en una pestaña que lleva tiempo abierta."""
+    parts = []
+    for name in STATIC_FILES:
+        st = (STATIC / name).stat()
+        parts.append(f"{name}:{st.st_mtime_ns}:{st.st_size}")
+    return hashlib.sha1("|".join(parts).encode()).hexdigest()[:10]
+
+
+def inject_tags() -> bytes:
+    v = version()
+    return (
+        f'<link rel="stylesheet" href="/_proxy/static/conditions.css?v={v}">'
+        f'<script src="/_proxy/static/meteo.js?v={v}" defer></script>'
+        f'<script src="/_proxy/static/conditions.js?v={v}" data-nuc-version="{v}" defer></script></head>'
+    ).encode()
 
 _cache = cond.Cache()
 OSM_WAIT = 8
@@ -31,7 +52,7 @@ _locks: dict[str, asyncio.Lock] = {}
 
 
 def inject(html: bytes) -> bytes:
-    return html.replace(b"</head>", INJECT, 1)
+    return html.replace(b"</head>", inject_tags(), 1)
 
 
 def _key(request: Request) -> str | None:
@@ -188,16 +209,22 @@ async def standalone(request: Request) -> Response:
         return PlainTextResponse("bad crag", status_code=400)
     return HTMLResponse(
         '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,'
-        f'initial-scale=1"><title>Conditions</title>{INJECT.decode()}<body class="nuc-standalone">'
+        f'initial-scale=1"><title>Conditions</title>{inject_tags().decode()}<body class="nuc-standalone">'
         f'<div id="nuc-root" data-crag="{key}"></div></body></html>'
     )
 
 
 async def static(request: Request) -> Response:
     name = request.path_params["name"]
-    if name not in ("conditions.js", "conditions.css", "meteo.js", "map.js", "map.css"):
+    if name not in STATIC_FILES or name.endswith(".html"):
         return PlainTextResponse("no", status_code=404)
-    return FileResponse(STATIC / name, headers={"cache-control": "no-cache"})
+    # Con ?v= la URL cambia con cada versión: se puede guardar para siempre. Sin ella, que se revalide siempre.
+    cache = "public, max-age=31536000, immutable" if request.query_params.get("v") else "no-cache"
+    return FileResponse(STATIC / name, headers={"cache-control": cache})
+
+
+async def version_json(_: Request) -> Response:
+    return JSONResponse({"v": version()}, headers={"cache-control": "no-store"})
 
 
 CRAG = "{cat}/{country}/{crag}"
@@ -208,4 +235,5 @@ routes = [
     Route(f"/_proxy/conditions/{CRAG}/webcams", add_webcam, methods=["POST"]),
     Route(f"/_proxy/conditions/{CRAG}", standalone),
     Route("/_proxy/static/{name}", static),
+    Route("/_proxy/version", version_json),
 ]
