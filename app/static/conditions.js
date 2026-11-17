@@ -513,27 +513,40 @@
   // pestaña. Las nuestras valen para cualquier escuela con coordenadas: se pone un chip propio que lleva a ellas.
   const CRAG_PATH = /^\/crags\/(sportclimbing|bouldering)\/([a-z0-9-]+)\/([a-z0-9-]+)(\/|$)/;
   const chipInfo = {};
+  function loadChip(key) {
+    if (chipInfo[key]) return;
+    chipInfo[key] = "☁ Conditions";
+    const p = prefs();
+    fetch(`/_proxy/conditions/${key}/data?tmin=${p.tmin}&tmax=${p.tmax}`).then((r) => r.json()).then((d) => {
+      if (!d.now) return;
+      chipInfo[key] = `${d.now.state === "Dark" ? "☾" : d.now.state === "Sun" ? "☀" : "☁"} ${T(d.now.temp)}° · ${CAT_LABEL[d.days[d.today].cat]}`;
+      document.querySelectorAll(".nuc-chip").forEach((c) => (c.textContent = chipInfo[key]));
+    }).catch(() => {});
+  }
   function cragChip() {
     const m = location.pathname.match(CRAG_PATH);
     if (!m || ROUTE.test(location.pathname)) return;
     const hdr = Array.from(document.querySelectorAll(".crag-mobile-header, .crag-header")).find((h) => h.offsetWidth > 0);
-    if (!hdr || hdr.querySelector(".conditions-chip, .conditions-mobile-chip, .nuc-chip")) return;
+    if (!hdr) return;
     const key = m.slice(1, 4).join("/");
+    loadChip(key);
+    const theirs = hdr.querySelector(".conditions-chip, .conditions-mobile-chip");
+    if (theirs) {
+      // El chip de 8a.nu a veces sale solo con «Conditions» (sin temperatura): se rellena con nuestro resumen.
+      const info = chipInfo[key];
+      if (!/\d/.test(theirs.textContent || "") && info && /\d/.test(info)) {
+        const leaf = Array.from(theirs.querySelectorAll("*")).reverse().find((el) => /Conditions/.test(el.textContent || "") && !el.children.length) || theirs;
+        leaf.textContent = info;
+      }
+      return;
+    }
+    if (hdr.querySelector(".nuc-chip")) return;
     const a = document.createElement("a");
     a.className = "nuc-chip";
     a.href = `/crags/${key}/conditions`;
-    a.textContent = chipInfo[key] || "☁ Conditions";
+    a.textContent = chipInfo[key];
     const trigger = hdr.querySelector(".crag-mobile-header__trigger");
     (trigger && trigger.parentElement === hdr ? trigger : hdr.lastElementChild || hdr).after(a);
-    if (!chipInfo[key]) {
-      chipInfo[key] = "☁ Conditions";
-      const p = prefs();
-      fetch(`/_proxy/conditions/${key}/data?tmin=${p.tmin}&tmax=${p.tmax}`).then((r) => r.json()).then((d) => {
-        if (!d.now) return;
-        chipInfo[key] = `${d.now.state === "Dark" ? "☾" : d.now.state === "Sun" ? "☀" : "☁"} ${T(d.now.temp)}° · ${CAT_LABEL[d.days[d.today].cat]}`;
-        document.querySelectorAll(".nuc-chip").forEach((c) => (c.textContent = chipInfo[key]));
-      }).catch(() => {});
-    }
   }
   function tick() { try { if (hydrated()) { mapButton(); menuEntry(); cragChip(); mount(); } } catch (e) { console.warn("nuc", e); } }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tick); else tick();
