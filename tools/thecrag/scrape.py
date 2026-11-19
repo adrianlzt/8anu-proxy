@@ -127,25 +127,22 @@ async def main() -> None:
             str(PROFILE), channel="chrome", headless=True, args=["--disable-blink-features=AutomationControlled"],
             user_agent=UA, locale="es-ES", viewport={"width": 1366, "height": 850})
         pg = b.pages[0] if b.pages else await b.new_page()
-        try:
-            for c in crags:
-                dest = outdir / (c["key"].split("/")[-1] + ".json")
-                if dest.exists():
-                    continue
+        for c in crags:
+            dest = outdir / (c["key"].split("/")[-1] + ".json")
+            if dest.exists():
+                continue
+            area, partial = None, []
+            try:
                 area = await find_area(pg, c)
-                partial: list[dict] = []
-                try:
-                    nodes = await crawl(pg, area, partial, SECTORS.get(c["key"], [])) if area else []
-                except Blocked:
-                    if partial:
-                        (outdir / (c["key"].split("/")[-1] + ".partial.json")).write_text(
-                            json.dumps({"crag": c["key"], "url": area, "nodes": partial}, ensure_ascii=False))
-                    raise
-                dest.write_text(json.dumps({"crag": c["key"], "url": area, "nodes": nodes}, ensure_ascii=False))
-                with_aspect = sum(1 for n in nodes if n["aspect"] and any(n["aspect"].values()) and not n["inherited"])
-                print(f"{c['key']}: {area} · {len(nodes)} zonas, {with_aspect} con orientación", flush=True)
-        except Blocked as e:
-            print(f"theCrag bloquea ({e}): paro.", flush=True)
+                nodes = await crawl(pg, area, partial, SECTORS.get(c["key"], [])) if area else []
+            except Blocked as e:
+                # Se guarda lo que haya (cuenta como hecha) y se sigue con la siguiente tras 15 min de descanso.
+                print(f"{c['key']}: theCrag bloquea ({e}); guardo {len(partial)} zonas y descanso 15 min", flush=True)
+                nodes = partial
+                await asyncio.sleep(900)
+            dest.write_text(json.dumps({"crag": c["key"], "url": area, "nodes": nodes}, ensure_ascii=False))
+            with_aspect = sum(1 for n in nodes if n["aspect"] and any(n["aspect"].values()) and not n["inherited"])
+            print(f"{c['key']}: {area} · {len(nodes)} zonas, {with_aspect} con orientación", flush=True)
         await b.close()
 
 
