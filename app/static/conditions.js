@@ -160,6 +160,11 @@
   function header(d) {
     const n = d.now;
     const sym = n.state === "Dark" ? "☾" : n.state === "Sun" ? "☀" : "◐";
+    // Bajo la cabecera de 8a.nu (nombre + chip, que ya lleva nuestro resumen) no se repiten nombre ni píldora.
+    const under = state.root && state.root.previousElementSibling &&
+      /crag-mobile-header|crag-header/.test(state.root.previousElementSibling.className);
+    if (under) return `<div class="nuc-head"><span class="nuc-now">Now ${sym} ${T(n.temp)}° ${esc(n.state.toLowerCase())} · rock ${esc(n.rock)} · ${n.rh} % · ${W(n.wind)}</span>
+      <a class="nuc-link nuc-maplink" href="/_proxy/map#${d.crag.lat},${d.crag.lon},10">🗺 Conditions map</a></div>`;
     return `<div class="nuc-head"><span class="nuc-crag">${esc(d.crag.name)}</span>
       <span class="nuc-pill nuc-c-${n.cat}">${sym} ${T(n.temp)}° · ${esc(n.state)}</span>
       <span class="nuc-now">Rock ${esc(n.rock)} · ${n.rh} % · ${W(n.wind)}</span>
@@ -512,35 +517,30 @@
   // En las escuelas que 8a.nu no tiene marcadas con condiciones no sale su chip «24° · OK» en la cabecera ni la
   // pestaña. Las nuestras valen para cualquier escuela con coordenadas: se pone un chip propio que lleva a ellas.
   const CRAG_PATH = /^\/crags\/(sportclimbing|bouldering)\/([a-z0-9-]+)\/([a-z0-9-]+)(\/|$)/;
-  const chipInfo = {};
+  const chipInfo = {}, chipCat = {};
   function loadChip(key) {
     if (chipInfo[key]) return;
     chipInfo[key] = "☁ Conditions";
     const p = prefs();
     fetch(`/_proxy/conditions/${key}/data?tmin=${p.tmin}&tmax=${p.tmax}`).then((r) => r.json()).then((d) => {
       if (!d.now) return;
-      chipInfo[key] = `${d.now.state === "Dark" ? "☾" : d.now.state === "Sun" ? "☀" : "☁"} ${T(d.now.temp)}° · ${CAT_LABEL[d.days[d.today].cat]}`;
+      chipCat[key] = d.days[d.today].cat;
+      chipInfo[key] = `${d.now.state === "Dark" ? "☾" : d.now.state === "Sun" ? "☀" : "◐"} ${T(d.now.temp)}° · ${CAT_LABEL[d.days[d.today].cat]}`;
       document.querySelectorAll(".nuc-chip").forEach((c) => (c.textContent = chipInfo[key]));
     }).catch(() => {});
   }
   function cragChip() {
     const m = location.pathname.match(CRAG_PATH);
-    if (!m || ROUTE.test(location.pathname)) return;
+    if (!m) return;
     const hdr = Array.from(document.querySelectorAll(".crag-mobile-header, .crag-header")).find((h) => h.offsetWidth > 0);
     if (!hdr) return;
     const key = m.slice(1, 4).join("/");
     loadChip(key);
-    const theirs = hdr.querySelector(".conditions-chip, .conditions-mobile-chip");
-    if (theirs) {
-      // El chip de 8a.nu a veces sale solo con «Conditions» (sin temperatura): se rellena con nuestro resumen.
-      const info = chipInfo[key];
-      if (!/\d/.test(theirs.textContent || "") && info && /\d/.test(info)) {
-        const leaf = Array.from(theirs.querySelectorAll("*")).reverse().find((el) => /Conditions/.test(el.textContent || "") && !el.children.length) || theirs;
-        leaf.textContent = info;
-      }
-      return;
-    }
-    if (hdr.querySelector(".nuc-chip")) return;
+    // El chip de 8a.nu («21° · Good» con su propio modelo, o solo «Conditions») se esconde y va el nuestro, para que
+    // diga lo mismo que el bloque de condiciones de debajo.
+    hdr.querySelectorAll(".conditions-chip:not(.beta-chip), .conditions-mobile-chip").forEach((c) => { c.style.display = "none"; });
+    const mine = hdr.querySelector(".nuc-chip");
+    if (mine) { mine.className = `nuc-chip${chipCat[key] ? " nuc-c-" + chipCat[key] : ""}`; return; }
     const a = document.createElement("a");
     a.className = "nuc-chip";
     a.href = `/crags/${key}/conditions`;

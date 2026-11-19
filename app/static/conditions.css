@@ -204,3 +204,8 @@ body.nuc-standalone #nuc-root { max-width: 720px; margin: 0 auto; padding: 0 0 2
 #nuc-update { position: fixed; left: 50%; transform: translateX(-50%); top: calc(10px + env(safe-area-inset-top)); z-index: 2147483001;
   background: #1d1d1b; color: #fff; border: 0; border-radius: 999px; padding: 10px 16px; font: 600 14px/1.2 system-ui, sans-serif;
   box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+/* Color del chip de la cabecera según el veredicto de hoy. */
+.nuc-chip.nuc-c-great { background: #d5f0df; border-color: #1f8a4c; color: #11552e; }
+.nuc-chip.nuc-c-good { background: #e3f7ea; border-color: #4cb879; color: #1d6b3e; }
+.nuc-chip.nuc-c-ok { background: #fff3cf; border-color: #e3b73a; color: #7a5a00; }
+.nuc-chip.nuc-c-bad, .nuc-chip.nuc-c-night { background: #fadbe0; border-color: #a3192f; color: #a3192f; }
