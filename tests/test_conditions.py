@@ -84,7 +84,7 @@ def test_preferencias_cambian_la_puntuacion():
 def test_viento_efectivo_segun_orientacion():
     face, _ = cond.effective_wind(20, 30, 180, 180)  # viento del sur contra una pared al sur
     back, _ = cond.effective_wind(20, 30, 0, 180)  # del norte: la pared queda a sotavento
-    assert face == 20 and back < 8
+    assert face == 20 and back == 12  # a sotavento llega el 60 %
 
 
 def test_condensacion_con_roca_fria_y_aire_humedo():

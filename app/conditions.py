@@ -240,8 +240,9 @@ def humidity_score(rh: float) -> float:
 
 
 def effective_wind(wind: float, gust: float, wind_dir: float, aspect: float) -> tuple[float, float]:
-    """Viento que llega a la pared: entero si sopla de cara, un tercio si viene de detrás o de lado."""
-    exposure = 0.35 + 0.65 * max(0.0, math.cos(math.radians(wind_dir - aspect)))
+    """Viento que llega a la pared: entero si sopla de cara, el 60 % si viene de detrás o de lado (rodea la pared y
+    remolinea; comparando con SendScore, con 25–30 km/h de espaldas tampoco se está bien)."""
+    exposure = 0.6 + 0.4 * max(0.0, math.cos(math.radians(wind_dir - aspect)))
     return wind * exposure, gust * exposure
 
 
@@ -250,12 +251,12 @@ def wind_score(eff: float, gust: float, rh: float) -> float:
     las rachas penalizan."""
     if eff < 3:
         s = 0.92 if rh > 70 else 1.0
-    elif eff <= 18:
+    elif eff <= 12:
         s = 1.0
-    else:
-        s = max(0.4, 1 - (eff - 18) / 17 * 0.4)
-    if gust > 45:
-        s *= max(0.6, 1 - (gust - 45) / 50)
+    else:  # 20 km/h → 0,8; 30 → 0,57; 40 → 0,33
+        s = max(0.25, 1 - (eff - 12) / 25 * 0.6)
+    if gust > 35:
+        s *= max(0.5, 1 - (gust - 35) / 60)
     return s
 
 
@@ -293,7 +294,7 @@ def score_hours(hours: list[dict], p: Prefs, rock: Rock, aspect: float, now_idx:
         vpd = 0.6108 * math.exp(17.27 * t / (t + 237.3)) * max(0.0, 1 - rh / 100)
         dry = (0.04 + irr / 1200 + vpd * 0.3 * (1 + min(eff, 30) / 12)) * rock.drying
         wet = min(4.0, max(0.0, wet + rain * rock.absorb + condense * 0.12 - dry * (1 - condense)))
-        state = "wet" if wet > 0.6 else "damp" if wet > 0.15 else "dry"
+        state = "wet" if wet > 1.2 else "damp" if wet > 0.15 else "dry"
         f = {
             "temp": temp_score(comfort, p),
             "humidity": humidity_score(rh),
