@@ -43,13 +43,18 @@ _pending: dict[str, set[str]] = {"terrain": set(), "osm": set()}
 def current(key: str) -> dict:
     """La mejor orientación guardada de la escuela `key`, sin pedir nada fuera."""
     rows = store.get_aspects(key)
-    sectors = {r["sector"]: r["deg"] for r in rows if r["sector"] and r["source"] == "user"}
-    for source in ("user", "osm", "terrain"):
+    # Sectores: los de theCrag (tools/thecrag) y encima los que marca el usuario.
+    sectors, sector_src = {}, {}
+    for source in ("thecrag", "user"):
+        for r in rows:
+            if r["sector"] and r["source"] == source:
+                sectors[r["sector"]], sector_src[r["sector"]] = r["deg"], source
+    for source in ("user", "thecrag", "osm", "terrain"):
         r = next((r for r in rows if r["sector"] == "" and r["source"] == source), None)
         if r:
             return {"deg": r["deg"], "source": source, "compass": cond.compass(r["deg"]), "slope": round(r["slope"] or 0),
-                    "sectors": sectors}  # fmt: skip
-    return {"deg": 180.0, "source": "default", "compass": "S?", "slope": 0, "sectors": sectors}
+                    "sectors": sectors, "sector_src": sector_src}  # fmt: skip
+    return {"deg": 180.0, "source": "default", "compass": "S?", "slope": 0, "sectors": sectors, "sector_src": sector_src}
 
 
 def request(key: str, lat: float, lon: float, source: str) -> None:
@@ -139,7 +144,7 @@ async def resolve_terrain(app, key: str, lat: float, lon: float) -> None:
 
 async def resolve_osm(app, key: str, lat: float, lon: float) -> None:
     rows = store.get_aspects(key)
-    if any(r["sector"] == "" and r["source"] in ("osm", "user") for r in rows):
+    if any(r["sector"] == "" and r["source"] in ("osm", "user", "thecrag") for r in rows):
         return
     found = cliff_aspect(await _cliffs(app, _tile(lat, lon)), lat, lon)
     if found:

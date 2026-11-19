@@ -151,6 +151,7 @@ async def conditions_json(request: Request) -> Response:
         deg = aspect["sectors"].get(s["slug"])
         if deg is not None:
             s["aspect"] = deg
+            s["aspect_src"] = aspect.get("sector_src", {}).get(s["slug"], "user")
             s["compass"] = cond.compass(deg)
             off = weather.get("utc_offset_seconds", 0)
             s["sun"] = {

@@ -4,6 +4,7 @@
 (function () {
   "use strict";
   const ROUTE = /^\/crags\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-z0-9-]+)\/conditions\/?$/;
+  const SRC = { user: "set by you", thecrag: "from theCrag", osm: "from OpenStreetMap cliffs", terrain: "estimated from terrain", default: "unknown, assumed south" };
   const CAT_LABEL = { great: "Great", good: "Good", ok: "OK", bad: "Bad", night: "Night" };
   const PREFS_KEY = "nuc-prefs";
   const DAYNAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -342,12 +343,12 @@
   function sunCard(d) {
     const x = d.days[state.sel], s = x.sun, a = d.aspect;
     const mapped = d.crag.sectors.filter((z) => z.aspect != null);
-    const sect = mapped.map((z) => `<div class="nuc-sector"><div class="nuc-row"><b>${esc(z.name)}</b><small>faces ${esc(z.compass)} (${Math.round(z.aspect)}°)</small></div>
+    const sect = mapped.map((z) => `<div class="nuc-sector"><div class="nuc-row"><b>${esc(z.name)}</b><small>faces ${esc(z.compass)} (${Math.round(z.aspect)}°)${z.aspect_src === "thecrag" ? " · theCrag" : ""}</small></div>
       ${sunBar(z.sun[x.date])}<div>${sunText(z.sun[x.date])}</div></div>`).join("");
     const lead = s.sun.length ? `${esc(d.crag.name)} gets sun from ${fmtMin(s.sun[0][0])} until ${fmtMin(s.sun[s.sun.length - 1][1])}.` : `${esc(d.crag.name)} gets no direct sun.`;
     return `<section class="nuc-card"><div class="nuc-pad nuc-row"><h2>Sun on the wall</h2><small>${dayLabel(x, state.sel)}, ${shortDate(x.date)}</small></div>
       <div class="nuc-pad"><p>${lead}</p>
-      <div class="nuc-row"><b>${esc(d.crag.name)}</b><small>${a.source === "user" ? "Wall set by you" : "Estimated from terrain"} · faces ${esc(a.compass)} (${Math.round(a.deg)}°)</small></div>
+      <div class="nuc-row"><b>${esc(d.crag.name)}</b><small>Wall ${SRC[a.source] || a.source} · faces ${esc(a.compass)} (${Math.round(a.deg)}°)</small></div>
       ${sunBar(s)}<div class="nuc-suntext">${sunText(s)}</div><hr>
       <div class="nuc-muted">${d.crag.sectors.length} sectors</div>
       ${mapped.length ? sect : `<div class="nuc-muted">Same as the crag: no wall data of their own yet</div>`}
@@ -361,7 +362,7 @@
     const tcls = w.temperature.state === "In your range" ? "nuc-green" : /Close/.test(w.temperature.state) ? "nuc-amber" : "nuc-red";
     const rcls = w.rock.state === "Dry" ? "nuc-green" : "nuc-red";
     const mapped = d.crag.sectors.filter((z) => z.aspect != null).length;
-    const src = a.source === "user" ? "set by you" : `estimated from the terrain (slope ${a.slope}°), may be wrong`;
+    const src = a.source === "terrain" ? `estimated from the terrain (slope ${a.slope}°), may be wrong` : SRC[a.source] || a.source;
     const fcls = (v) => (v >= 0.95 ? "great" : v >= 0.8 ? "good" : v >= 0.6 ? "ok" : "bad");
     const bars = (w.factors || []).map((f) => `<div class="nuc-factor"><div class="nuc-row"><b>${esc(f.label)}</b><small>${esc(f.text)}</small></div>
       <div class="nuc-fbar"><span class="nuc-bg-${fcls(f.value)}" style="width:${Math.max(4, f.value * 100)}%"></span></div></div>`).join("");
@@ -412,7 +413,7 @@
       `<option value="${v}" ${cur != null && Math.round(cur) === v ? "selected" : ""}>${k} (${v}°)</option>`).join("")}</select>`;
     const sectors = d.crag.sectors.map((z) => `<label>${esc(z.name)} ${sel("s:" + z.slug, z.aspect)}</label>`).join("");
     return `<section class="nuc-card" id="nuc-know"><div class="nuc-pad"><h2>Know this crag?</h2></div><form class="nuc-pad nuc-form" data-form="crag">
-      <p>Which way does the main wall face? Now: ${esc(a.compass)} (${Math.round(a.deg)}°), ${a.source === "user" ? "set by you" : "estimated from terrain"}.</p>
+      <p>Which way does the main wall face? Now: ${esc(a.compass)} (${Math.round(a.deg)}°), ${SRC[a.source] || a.source}.</p>
       <label>Main wall ${sel("crag", a.source === "user" ? a.deg : null)} <span>or degrees <input name="deg" type="number" min="0" max="359" placeholder="${Math.round(a.deg)}"></span></label>
       <p class="nuc-muted">Sectors (only if they differ from the main wall):</p>${sectors}
       <div class="nuc-actions"><button type="button" data-cancel="crag">Cancel</button><button type="submit" class="primary">Save</button></div></form></section>`;
