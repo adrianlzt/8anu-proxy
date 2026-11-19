@@ -287,8 +287,12 @@ def score_hours(hours: list[dict], p: Prefs, rock: Rock, aspect: float, now_idx:
         # Humedad de la roca.
         rain = h["precip"] or 0
         condense = max(0.0, min(1.0, (dew + 0.5 - rock_t) / 2))
-        dry = (0.05 + irr / 1500 + min(eff, 30) / 120 + max(0, 1 - rh / 100) * 0.3) * rock.drying
-        wet = min(6.0, max(0.0, wet + rain * rock.absorb + condense * 0.12 - dry * (1 - condense)))
+        # Secado: evaporación ∝ déficit de presión de vapor (lo seco que está el aire) × (1 + viento), más el sol en la
+        # pared. Con 20 °C y 40 % (VPD 1,4 kPa) una pared en sombra pierde ~0,6 mm/h; de noche húmeda, ~0,1.
+        # Tope de 4 mm: lo que no cabe escurre por una pared vertical.
+        vpd = 0.6108 * math.exp(17.27 * t / (t + 237.3)) * max(0.0, 1 - rh / 100)
+        dry = (0.04 + irr / 1200 + vpd * 0.3 * (1 + min(eff, 30) / 12)) * rock.drying
+        wet = min(4.0, max(0.0, wet + rain * rock.absorb + condense * 0.12 - dry * (1 - condense)))
         state = "wet" if wet > 0.6 else "damp" if wet > 0.15 else "dry"
         f = {
             "temp": temp_score(comfort, p),
