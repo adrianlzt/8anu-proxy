@@ -140,6 +140,8 @@ async def main() -> None:
                 print(f"{c['key']}: theCrag bloquea ({e}); guardo {len(partial)} zonas y descanso 15 min", flush=True)
                 nodes = partial
                 await asyncio.sleep(900)
+                if not nodes:  # ni siquiera se encontró la zona: no se marca como hecha, se reintenta en otra pasada
+                    continue
             dest.write_text(json.dumps({"crag": c["key"], "url": area, "nodes": nodes}, ensure_ascii=False))
             with_aspect = sum(1 for n in nodes if n["aspect"] and any(n["aspect"].values()) and not n["inherited"])
             print(f"{c['key']}: {area} · {len(nodes)} zonas, {with_aspect} con orientación", flush=True)
