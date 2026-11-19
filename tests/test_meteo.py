@@ -47,3 +47,21 @@ def test_viento_por_modelo():
     d = meteo.model_days(hourly)["models"]["ECMWF"][0]
     assert d["wind"] == 10 and d["gust"] == 20  # la racha de las 23 h queda fuera de 8–20 h
     assert d["wind_dir"] in (0, 360) or d["wind_dir"] < 5 or d["wind_dir"] > 355  # media vectorial de 350° y 10°: norte
+
+
+def test_paso_real_de_cada_modelo():
+    times = [f"2026-11-19T{h:02d}:00" for h in range(24)] + [f"2026-11-20T{h:02d}:00" for h in range(24)]
+    hourly_rain = [0] * 10 + [0.2, 1.4, 0.3] + [0] * 35
+    # Bloques de 3 h que acaban en 00, 03… UTC; con UTC+1, las horas locales 2-3-4, 5-6-7…
+    block_rain = [0] * 11 + [0.4, 0.4, 0.4] + [0] * 34
+    multi = {"time": times,
+             "temperature_2m_ecmwf_ifs025": [10] * 48, "precipitation_ecmwf_ifs025": block_rain,
+             "temperature_2m_icon_seamless": [10] * 48, "precipitation_icon_seamless": hourly_rain}
+    ens = {"time": times, "temperature_2m": [10] * 48, "precipitation": block_rain,
+           "temperature_2m_member01": [11] * 48, "precipitation_member01": [0] * 48}
+    mh = meteo.model_hours(multi, ens, 3600)
+    assert mh["dates"] == ["2026-11-19", "2026-11-20"]
+    assert mh["models"]["ECMWF"]["step"] == [3, 3]  # el día seco toma el paso del día con lluvia
+    assert mh["models"]["ICON"]["step"] == [1, 1]
+    assert mh["ens"]["step"] == [3, 3]
+    assert mh["ens"]["pp"][12] == 50 and mh["ens"]["pp"][0] == 0

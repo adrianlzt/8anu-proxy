@@ -151,6 +151,7 @@
     if (state.loading && !state.data) { root.innerHTML = '<div class="nuc-card nuc-pad">Loading conditions…</div>'; return; }
     if (state.error) { root.innerHTML = `<div class="nuc-card nuc-pad">Couldn't load conditions: ${esc(state.error)}</div>`; return; }
     const d = state.data;
+    if (window.NucMeteo) window.NucMeteo.days = d.days;  // ventana de escalada de cada día, para la vista hora a hora
     root.innerHTML = [header(d), daysCard(d), bestTime(d), scoreCard(d), sunCard(d), whyCard(d),
       window.NucMeteo ? window.NucMeteo.card(state.key, d.crag) : "", prefsCard(), webcamsCard(d), knowCard(d),
       `<a href="#" class="nuc-link nuc-official" data-official="1">${state.showOfficial ? "Hide" : "Show"} 8a.nu's version</a>`].join("");

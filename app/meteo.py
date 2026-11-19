@@ -7,6 +7,11 @@
 - Modelos: ECMWF IFS, ICON (DWD), GFS (NOAA), Météo-France (AROME 1,3 km donde llega, que incluye el norte de España;
   ARPEGE fuera) y UKMO. Resumen por día de cada uno (temperaturas, lluvia y viento de 8 a 20 h: medio, racha máxima y
   dirección dominante) y lo que se parecen.
+- Hora a hora por modelo (al tocar un día de la comparación): temperatura, lluvia y viento de cada modelo con la
+  resolución que de verdad tiene. Open-Meteo lo da todo cada hora, pero ECMWF (y su ensemble) sale cada 3 h, y UKMO,
+  GFS e ICON pasan a 3 h a partir de cierto plazo: entonces reparte la lluvia de cada bloque a partes iguales entre sus
+  horas. Se detecta por día (bloques de 3 h que acaban en 00, 03… UTC con las tres horas iguales) y se marca con su
+  «step», para pintar esas horas como un solo bloque y no aparentar una precisión que el modelo no tiene.
 - Avisos: tormentas, helada/nieve (isocero cerca de la altitud de la escuela), niebla, rachas fuertes, UV alto y calor.
 Todo de Open-Meteo, que ya corrige la temperatura por la altitud del punto (modelo digital del terreno de 90 m).
 """
@@ -14,6 +19,7 @@ Todo de Open-Meteo, que ya corrige la temperatura por la altitud del punto (mode
 import math
 import statistics
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 from . import conditions as cond
@@ -124,6 +130,56 @@ def model_days(hourly: dict) -> dict:
     return {"dates": dates, "models": per_model, "agreement": agreement}
 
 
+def _step(rain: list, utc_hours: list[int]) -> int:
+    """3 si la lluvia de esas horas viene en bloques de 3 h (las tres horas de cada bloque iguales y alguna con lluvia),
+    1 si no. Los bloques acaban en 00, 03, 06… UTC, como los pasos de los modelos. Un día seco no dice nada: 0."""
+    groups: dict[int, list] = {}
+    for v, u in zip(rain, utc_hours):
+        if v is not None:
+            groups.setdefault((u - 1) // 3, []).append(v)
+    if any(len(set(g)) > 1 for g in groups.values()):  # también los bloques cortados por la medianoche
+        return 1
+    return 3 if any(any(g) for g in groups.values() if len(g) == 3) else 0
+
+
+def model_hours(multi: dict, ens: dict, utc_offset: int) -> dict:
+    """Hora a hora de cada modelo (temperatura, lluvia, viento, racha, dirección) y del ensemble de ECMWF (probabilidad
+    de lluvia y p90), con el paso real de cada uno por día (ver _step; un día seco toma el del día más cercano)."""
+    times = multi["time"]
+    dates = sorted({t[:10] for t in times})
+    day_idx = {d: [i for i, t in enumerate(times) if t.startswith(d)] for d in dates}
+    # Hora UTC absoluta de cada hora local (offset de ahora: un cambio de hora en la semana descuadra un día, poco).
+    uh = [int(datetime.fromisoformat(t).replace(tzinfo=timezone.utc).timestamp() - utc_offset) // 3600 for t in times]
+
+    def steps(rain: list) -> list[int]:
+        raw = [_step([rain[i] for i in day_idx[d]], [uh[i] for i in day_idx[d]]) for d in dates]
+        out = []
+        for k, v in enumerate(raw):
+            if not v:  # día seco: el paso del día con lluvia más cercano (o 1)
+                near = sorted((abs(j - k), w) for j, w in enumerate(raw) if w)
+                v = near[0][1] if near else 1
+            out.append(v)
+        return out
+
+    r1 = lambda xs: [None if v is None else round(v, 1) for v in xs]  # noqa: E731
+    r0 = lambda xs: [None if v is None else round(v) for v in xs]  # noqa: E731
+    models = {}
+    for key, name in MODELS.items():
+        temps, rain = multi.get(f"temperature_2m_{key}"), multi.get(f"precipitation_{key}") or []
+        if not temps or all(v is None for v in temps):
+            continue
+        models[name] = {"t": r1(temps), "p": r1(rain), "w": r0(multi.get(f"wind_speed_10m_{key}") or []),
+                        "g": r0(multi.get(f"wind_gusts_10m_{key}") or []), "d": r0(multi.get(f"wind_direction_10m_{key}") or []),
+                        "step": steps(rain)}  # fmt: skip
+    e = ensemble_stats(ens)
+    e_idx = {t: i for i, t in enumerate(e["time"])}
+    pick = lambda k: [e[k][e_idx[t]] if t in e_idx else None for t in times]  # noqa: E731
+    ctrl = ens.get("precipitation") or []
+    ctrl = [ctrl[e_idx[t]] if t in e_idx and e_idx[t] < len(ctrl) else None for t in times]
+    return {"time": times, "dates": dates, "models": models, "utc_offset": utc_offset,
+            "ens": {"pp": pick("pp"), "p90": pick("p90"), "step": steps(ctrl)}}  # fmt: skip
+
+
 def risks(h: dict, elevation: float) -> list[dict]:
     """Avisos por día a partir del meteograma: tormentas, helada/nieve, niebla, rachas, UV y calor."""
     out = []
@@ -167,7 +223,7 @@ async def detail(app, key: str, lat: float, lon: float) -> dict:
     base = {"latitude": lat, "longitude": lon, "timezone": "auto", "wind_speed_unit": "kmh"}
     main = await _get(app, f"{cond.OPEN_METEO}/forecast", {**base, "hourly": DETAIL, "forecast_days": 4})
     ens = await _get(app, ENSEMBLE, {**base, "hourly": "temperature_2m,precipitation", "models": "ecmwf_ifs025",
-                                     "forecast_days": 4})  # fmt: skip
+                                     "forecast_days": 7})  # fmt: skip
     multi = await _get(app, f"{cond.OPEN_METEO}/forecast", {**base, "hourly": "temperature_2m,precipitation,"
                                                             "wind_speed_10m,wind_gusts_10m,wind_direction_10m",
                                                             "models": ",".join(MODELS), "forecast_days": 7})  # fmt: skip
@@ -187,6 +243,7 @@ async def detail(app, key: str, lat: float, lon: float) -> dict:
         "hours": hours,
         "ensemble": {**ens_cut, "members": e["members"]},
         "models": model_days(multi["hourly"]),
+        "model_hours": model_hours(multi["hourly"], ens["hourly"], multi.get("utc_offset_seconds", 0)),
         "risks": risks(h, elevation),
         "summary": {
             "pressure_trend": round(hours["pressure_msl"][min(23, len(hours["pressure_msl"]) - 1)] - hours["pressure_msl"][0], 1),

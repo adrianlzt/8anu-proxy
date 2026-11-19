@@ -122,10 +122,162 @@
         return `<td>${v.tmax}°/${v.tmin}°<br><small>${v.rain == null ? "–" : v.rain + " mm"}</small>${wind}</td>`;
       }).join("");
       const badge = a ? `<span class="nuc-badge nuc-c-${AGREE[a.level][1]}" title="Max temp spread ${a.tspread}°, ${a.wet_models}/${a.models} models with ≥1 mm">${AGREE[a.level][0]}</span>` : "";
-      return `<tr><th>${dayName(date)}</th>${cells}<td>${badge}</td></tr>`;
+      return `<tr class="mg-dayrow" data-hday="${date}"><th>${dayName(date)}<span class="mg-hourly">Hourly ›</span></th>${cells}<td>${badge}</td></tr>`;
     }).join("");
-    return `<div class="mg-scroll"><table class="mg-models"><thead><tr><th></th>${names.map((x) => `<th>${esc(x)}</th>`).join("")}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `<p class="mg-taphint">👆 Tap a day to compare the models hour by hour.</p><div class="mg-scroll"><table class="mg-models"><thead><tr><th></th>${names.map((x) => `<th>${esc(x)}</th>`).join("")}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
+
+  // --- Hora a hora de un día (ventana a pantalla completa al tocar un día de «What each model says») -------------
+  // Filas: horas; columnas: cada modelo y el ensemble de ECMWF. Si un modelo solo da pasos de 3 h ese día, sus horas
+  // van en una celda de 3 filas (Open-Meteo reparte la lluvia del bloque a partes iguales: no hay detalle horario).
+  // Arriba, el resumen para la ventana de escalada del día (la de la página de condiciones) o, si no hay, las horas de luz.
+  const sheet = { date: null, mode: "rain", night: false };
+  const hourOf = (t) => +t.slice(11, 13);
+  const block = (t, off) => Math.floor((Date.parse(t + ":00Z") / 3.6e6 - off / 3600 - 1) / 3);
+  const WET = 0.1;
+
+  function dayHours(mh, date) { return mh.time.map((t, i) => [t, i]).filter(([t]) => t.startsWith(date)).map(([, i]) => i); }
+
+  function climbInfo(date) {
+    const days = (window.NucMeteo.days || []);
+    const x = days.find((y) => y.date === date);
+    let from = 7, to = 19, label = "daylight";
+    if (x && x.sun && x.sun.daylight && x.sun.daylight.length) {
+      from = Math.floor(x.sun.daylight[0][0] / 60); to = Math.ceil(x.sun.daylight[x.sun.daylight.length - 1][1] / 60);
+    }
+    const dl = [from, to];
+    if (x && x.window) { from = +x.window.from.slice(0, 2); to = +x.window.to.slice(0, 2) || 24; label = "your window"; }
+    return { from, to, label, dl, cat: x && x.cat };
+  }
+
+  function sheetSummary(mh, idx, ci) {
+    const names = Object.keys(mh.models);
+    const win = idx.filter((i) => hourOf(mh.time[i]) >= ci.from && hourOf(mh.time[i]) < ci.to);
+    const tot = names.map((n) => [n, win.reduce((a, i) => a + (mh.models[n].p[i] || 0), 0), win.some((i) => mh.models[n].p[i] != null)]).filter(([, , ok]) => ok);
+    const wet = tot.filter(([, mm]) => mm >= WET);
+    const pp = Math.max(0, ...win.map((i) => mh.ens.pp[i] || 0));
+    const range = `${String(ci.from).padStart(2, "0")}–${String(ci.to).padStart(2, "0")} h`;
+    let verdict, cls;
+    if (!tot.length) { verdict = "No model data for these hours"; cls = "ok"; }
+    else if (!wet.length) { verdict = `Dry in all ${tot.length} models`; cls = pp >= 30 ? "ok" : "great"; }
+    else if (wet.length === tot.length) { verdict = `Rain in all ${tot.length} models`; cls = "bad"; }
+    else { verdict = `Rain in ${wet.length} of ${tot.length} models`; cls = wet.length * 2 >= tot.length ? "bad" : "ok"; }
+    const who = wet.sort((a, b) => b[1] - a[1]).map(([n, mm]) => `${esc(n)} ${mm.toFixed(1)} mm`).join(", ");
+    return `<div class="mg-sum nuc-c-${cls}"><div><small>${ci.label === "your window" ? "Your climbing window" : "Daylight"} · ${range}</small></div>
+      <b>${verdict}</b>${who ? `<div>${who}</div>` : ""}<div>ECMWF ensemble: ${pp ? `up to ${pp} % chance of rain in an hour` : "no member rains"}</div></div>`;
+  }
+
+  function sheetTable(mh, idx, ci) {
+    const names = Object.keys(mh.models), di = mh.dates.indexOf(sheet.date), off = mh.utc_offset || 0;
+    const rows = sheet.night ? idx : idx.filter((i) => hourOf(mh.time[i]) >= ci.dl[0] - 1 && hourOf(mh.time[i]) <= ci.dl[1]);
+    const nowT = new Date(Date.now() + off * 1000).toISOString().slice(0, 13);
+    const cols = names.map((n) => ({ n, s: mh.models[n], step: mh.models[n].step[di] }));
+    if (sheet.mode === "rain") cols.push({ n: "ECMWF ens.", ens: true, s: mh.ens, step: mh.ens.step[di] });
+    const span = (col, k) => {  // cuántas filas visibles ocupa la celda que empieza en la fila k (0 si va dentro de otra)
+      if (col.step !== 3 || sheet.mode !== "rain") return 1;  // temperatura y viento: Open-Meteo los interpola cada hora
+      const b = block(mh.time[rows[k]], off);
+      if (k > 0 && block(mh.time[rows[k - 1]], off) === b) return 0;
+      let n = 1;
+      while (k + n < rows.length && block(mh.time[rows[k + n]], off) === b) n++;
+      return n;
+    };
+    const rainBg = (mm) => (mm >= WET ? `background:rgba(61,127,184,${Math.min(0.85, 0.18 + mm / 3)});${mm >= 1.5 ? "color:#fff;" : ""}` : "");
+    const cell = (col, k, n) => {
+      const ii = rows.slice(k, k + n), i = ii[0], rs = n > 1 ? ` rowspan="${n}"` : "", blk = n > 1 ? " mg-blk" : "";
+      if (col.ens) {
+        const pp = Math.max(...ii.map((j) => col.s.pp[j] ?? -1));
+        return pp < 0 ? `<td${rs} class="mg-na${blk}">–</td>` : `<td${rs} class="mg-ens${blk}" style="${pp ? `background:rgba(139,29,139,${0.08 + pp / 130});${pp >= 60 ? "color:#fff;" : ""}` : ""}">${pp ? pp + "%" : "·"}</td>`;
+      }
+      const s = col.s;
+      if (sheet.mode === "rain") {
+        const v = ii.map((j) => s.p[j]).filter((x) => x != null);
+        if (!v.length) return `<td${rs} class="mg-na${blk}">–</td>`;
+        const mm = v.reduce((a, b) => a + b, 0);
+        return `<td${rs} class="mg-rc${blk}" style="${rainBg(mm / v.length)}">${mm >= WET ? mm.toFixed(1) : "·"}${n > 1 ? `<i>${n} h</i>` : ""}</td>`;
+      }
+      if (sheet.mode === "temp") return s.t[i] == null ? `<td class="mg-na">–</td>` : `<td>${Math.round(s.t[i])}°</td>`;
+      if (s.w[i] == null) return `<td class="mg-na">–</td>`;
+      return `<td class="mg-wc"><i style="transform:rotate(${(s.d[i] || 0) + 180}deg)">↑</i>${s.w[i]}${s.g[i] != null ? ` <b>${s.g[i]}</b>` : ""}</td>`;
+    };
+    const agree = (i) => {
+      const ms = names.map((n) => mh.models[n]);
+      if (sheet.mode === "rain") {
+        const v = ms.map((m) => m.p[i]).filter((x) => x != null);
+        if (!v.length) return `<td class="mg-na">–</td>`;
+        const w = v.filter((x) => x >= WET).length;
+        const [t, c] = w === 0 ? ["Dry", "great"] : w === v.length ? ["All wet", "bad"] : [`${w}/${v.length} wet`, w * 2 >= v.length ? "bad" : "ok"];
+        return `<td><span class="nuc-badge nuc-c-${c}">${t}</span></td>`;
+      }
+      if (sheet.mode === "temp") {
+        const v = ms.map((m) => m.t[i]).filter((x) => x != null);
+        if (!v.length) return `<td class="mg-na">–</td>`;
+        const sp = Math.max(...v) - Math.min(...v);
+        return `<td><span class="nuc-badge nuc-c-${sp <= 2 ? "great" : sp <= 4 ? "ok" : "bad"}">±${(sp / 2).toFixed(1)}°</span></td>`;
+      }
+      const g = ms.map((m) => m.g[i]).filter((x) => x != null);
+      return g.length ? `<td><span class="nuc-badge nuc-c-${Math.max(...g) >= 50 ? "bad" : Math.max(...g) >= 30 ? "ok" : "great"}">${Math.max(...g)}</span></td>` : `<td class="mg-na">–</td>`;
+    };
+    const body = rows.map((i, k) => {
+      const t = mh.time[i], h = hourOf(t);
+      const cls = [h >= ci.from && h < ci.to ? "mg-win" : "", t.slice(0, 13) === nowT ? "mg-nowrow" : "", t.slice(0, 13) < nowT ? "mg-past" : ""].join(" ");
+      const cells = cols.map((c) => { const n = span(c, k); return n ? cell(c, k, n) : ""; }).join("");
+      return `<tr class="${cls}"><th>${t.slice(11, 16)}${t.slice(0, 13) === nowT ? "<em>now</em>" : ""}</th>${agree(i)}${cells}</tr>`;
+    }).join("");
+    const head = { rain: "Rain", temp: "Spread", wind: "Max gust" }[sheet.mode];
+    return `<div class="mg-scroll mg-hscroll"><table class="mg-hours"><thead><tr><th></th><th>${head}</th>${cols.map((c) => `<th>${c.ens ? "ECMWF<br>ens." : c.n === "Météo-France" ? "Météo<br>France" : esc(c.n)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+
+  function renderSheet() {
+    const d = st.data, mh = d && d.model_hours;
+    let el = document.getElementById("mg-sheet");
+    if (!sheet.date || !mh) { if (el) el.remove(); document.documentElement.classList.remove("mg-noscroll"); return; }
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "mg-sheet";
+      el.className = "nuc mg-sheet";
+      document.body.appendChild(el);
+      el.addEventListener("click", sheetClick);
+    }
+    document.documentElement.classList.add("mg-noscroll");
+    const di = mh.dates.indexOf(sheet.date), idx = dayHours(mh, sheet.date), ci = climbInfo(sheet.date);
+    const prev = mh.dates[di - 1], next = mh.dates[di + 1];
+    const seg = (v, l) => `<button type="button" data-hmode="${v}" class="${sheet.mode === v ? "on" : ""}">${l}</button>`;
+    const legend = {
+      rain: "mm of rain in each hour (blue = more). <b>Wet</b> = 0.1 mm or more. The ensemble column is the share of ECMWF's 51 runs that rain in that hour: how sure that model is.",
+      temp: "Air temperature at the crag's altitude. <b>Spread</b>: how far apart the models are (± half the gap between warmest and coldest).",
+      wind: "Mean wind km/h and <b>gust</b>; the arrow points where it blows. Max gust: the highest of all models.",
+    }[sheet.mode];
+    el.innerHTML = `<div class="mg-shead">
+        <button type="button" class="mg-x" data-hclose="1" aria-label="Close">✕</button>
+        <div class="mg-stitle"><b>${dayName(sheet.date)}</b><small>hour by hour, each model</small></div>
+        <span class="mg-nav"><button type="button" data-hgo="${prev || ""}" ${prev ? "" : "disabled"}>‹</button><button type="button" data-hgo="${next || ""}" ${next ? "" : "disabled"}>›</button></span>
+      </div>
+      <div class="mg-sbody">
+        ${sheetSummary(mh, idx, ci)}
+        <div class="nuc-row"><div class="nuc-seg">${seg("rain", "🌧 Rain")}${seg("temp", "🌡 Temp")}${seg("wind", "💨 Wind")}</div>
+          <label class="mg-nightt"><input type="checkbox" data-hnight="1" ${sheet.night ? "checked" : ""}> night</label></div>
+        ${sheetTable(mh, idx, ci)}
+        <p class="nuc-muted">${legend} Rows with a purple edge are ${ci.label === "your window" ? "your climbing window" : "the daylight hours"}.
+        A cell that covers several hours (“3 h”) is a model that only gives 3-hour steps for this day: its rain is spread evenly, so it can't tell which of those hours it falls in.</p>
+      </div>`;
+  }
+
+  function sheetClick(ev) {
+    const b = ev.target.closest("button, input");
+    if (!b) return;
+    if (b.dataset.hclose) { history.state && history.state.mgSheet ? history.back() : closeSheet(); return; }
+    if (b.dataset.hgo) { sheet.date = b.dataset.hgo; renderSheet(); return; }
+    if (b.dataset.hmode) { sheet.mode = b.dataset.hmode; renderSheet(); return; }
+    if (b.dataset.hnight) { sheet.night = b.checked; renderSheet(); }
+  }
+  function openSheet(date) {
+    sheet.date = date;
+    history.pushState({ ...(history.state || {}), mgSheet: 1 }, "");
+    renderSheet();
+  }
+  function closeSheet() { sheet.date = null; renderSheet(); }
+  window.addEventListener("popstate", () => { if (sheet.date) closeSheet(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && sheet.date) history.back(); });
 
   function risksBlock(d) {
     if (!d.risks.length) return `<p class="mg-ok">✓ No storms, ice, fog, strong gusts or heat expected in the coming days.</p>`;
@@ -187,6 +339,7 @@
       localStorage.setItem(OPEN_KEY, isOpen() ? "0" : "1");
       rerender();
     }));
+    root.querySelectorAll("[data-hday]").forEach((r) => r.addEventListener("click", () => openSheet(r.dataset.hday)));
     root.querySelectorAll("[data-radar]").forEach((b) => b.addEventListener("click", () => { st.radar = true; rerender(); }));
     if (st.radar && st.data) radar(crag).catch((e) => console.warn("radar", e));
     const svg = root.querySelector("[data-mg]");

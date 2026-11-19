@@ -209,3 +209,39 @@ body.nuc-standalone #nuc-root { max-width: 720px; margin: 0 auto; padding: 0 0 2
 .nuc-chip.nuc-c-good { background: #e3f7ea; border-color: #4cb879; color: #1d6b3e; }
 .nuc-chip.nuc-c-ok { background: #fff3cf; border-color: #e3b73a; color: #7a5a00; }
 .nuc-chip.nuc-c-bad, .nuc-chip.nuc-c-night { background: #fadbe0; border-color: #a3192f; color: #a3192f; }
+/* Tabla de modelos: cada día abre la vista hora a hora. */
+.mg-taphint { font-size: 14px; color: var(--nuc-accent); margin: 2px 0 8px !important; }
+.mg-dayrow { cursor: pointer; }
+.mg-dayrow:active, .mg-dayrow:hover { background: var(--nuc-accent-bg); }
+.nuc .mg-models tbody .mg-dayrow th { border-left: 3px solid var(--nuc-accent); }
+.mg-hourly { display: block; font-size: 11px; font-weight: 600; color: var(--nuc-accent); margin-top: 2px; }
+/* Vista hora a hora: pantalla completa. */
+html.mg-noscroll, html.mg-noscroll body { overflow: hidden !important; }
+.mg-sheet { position: fixed; inset: 0; z-index: 100000; background: #f3f3ef; margin: 0; gap: 0; overflow: hidden; display: flex; flex-direction: column; }
+.mg-shead { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #fff; border-bottom: 1px solid var(--nuc-border); flex: none; }
+.mg-shead button { border: 1px solid var(--nuc-border); background: #fff; border-radius: 999px; width: 38px; height: 38px; font-size: 20px; line-height: 1; cursor: pointer; color: #1d1d1b; }
+.mg-shead button:disabled { opacity: .3; }
+.mg-stitle { flex: 1; display: flex; flex-direction: column; }
+.mg-stitle b { font-size: 19px; }
+.mg-nav { display: flex; gap: 6px; }
+.mg-sbody { overflow-y: auto; padding: 12px; flex: 1; -webkit-overflow-scrolling: touch; }
+.mg-sum { border: 2px solid; border-radius: 10px; padding: 10px 12px; font-size: 14px; background: #fff; }
+.mg-sum b { font-size: 18px; display: block; margin: 2px 0; }
+.mg-sum small { color: inherit; opacity: .85; }
+.mg-nightt { font-size: 14px; color: var(--nuc-muted); margin-top: 12px; display: flex; gap: 4px; align-items: center; }
+.mg-hscroll { margin-top: 10px; background: #fff; border-radius: 8px; max-width: 100%; }
+.mg-hours { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+.mg-hours th, .mg-hours td { padding: 6px 4px; border-bottom: 1px solid #efefea; text-align: center; white-space: nowrap; }
+.nuc .mg-hours thead th { position: sticky; top: 0; background: #fff !important; color: #1d1d1b !important; z-index: 2; font-size: 12px; border-bottom: 2px solid #d9d9d3; }
+.nuc .mg-hours tbody th { position: sticky; left: 0; background: #fff; z-index: 1; text-align: left; font-weight: 600; }
+.mg-hours tbody th em { display: block; font-style: normal; font-size: 10px; color: var(--nuc-accent); }
+.mg-hours .nuc-badge { font-size: 11px; padding: 0 5px; }
+.nuc .mg-hours tr.mg-win th { box-shadow: inset 4px 0 0 var(--nuc-accent); }
+.mg-hours tr.mg-win td { background-color: #fcf7fc; }
+.mg-hours tr.mg-nowrow th, .mg-hours tr.mg-nowrow td { border-top: 2px solid var(--nuc-accent); }
+.mg-hours tr.mg-past { opacity: .5; }
+.mg-hours td.mg-blk { border-left: 1px dashed #c9c9c2; border-right: 1px dashed #c9c9c2; }
+.mg-hours td i { display: block; font-style: normal; font-size: 10px; opacity: .7; }
+.mg-hours td.mg-na { color: #b5b5ae; }
+.mg-hours .mg-wc i { display: inline-block; margin-right: 2px; }
+.mg-hours .mg-wc b { color: #b3263b; font-weight: 600; }
