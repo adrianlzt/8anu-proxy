@@ -589,7 +589,8 @@
   function toposMount() {
     const m = location.pathname.match(CRAG_PATH);
     let card = document.getElementById("nuc-topos");
-    if (!m) { if (card) card.remove(); return; }
+    // En la página de condiciones no: los croquis van en la ficha de la escuela y sus sectores.
+    if (!m || ROUTE.test(location.pathname)) { if (card) card.remove(); return; }
     const key = m.slice(1, 4).join("/");
     const ckey = key + "|" + (new URLSearchParams(location.search).get("sector") || (location.pathname.match(/\/sectors\/([a-z0-9-]+)/) || [])[1] || "");
     if (card && card.isConnected && card.dataset.key === ckey) return;
