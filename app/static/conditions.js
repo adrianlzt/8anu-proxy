@@ -118,7 +118,7 @@
     const root = state.root;
     if (!root || !root.parentElement || root.parentElement === document.body) return;
     for (let el = root.nextElementSibling; el; el = el.nextElementSibling) {
-      if (el.tagName === "FOOTER" || el.id === "nuc-official") continue;
+      if (el.tagName === "FOOTER" || el.id === "nuc-official" || el.id === "nuc-topos") continue;
       el.style.display = state.showOfficial ? "" : "none";
     }
   }
@@ -550,7 +550,67 @@
     const trigger = hdr.querySelector(".crag-mobile-header__trigger");
     (trigger && trigger.parentElement === hdr ? trigger : hdr.lastElementChild || hdr).after(a);
   }
-  function tick() { try { if (hydrated()) { mapButton(); menuEntry(); cragChip(); mount(); } } catch (e) { console.warn("nuc", e); } }
+  // Croquis de theCrag (visor de thecrag.adrianlzt.com, con las vías encadenadas según 8a.nu en verde): tarjeta plegada
+  // debajo de la cabecera de la escuela (y de nuestro bloque de condiciones). Se carga solo al abrirla.
+  const TOPOS_JS = "https://thecrag.adrianlzt.com/_proxy/topos.js";
+  const TOPOS_OPEN = "nuc-topos-open";
+  const topos = { key: null, info: null, rendered: null };
+  function loadToposJs() {
+    if (window.tcTopos) return Promise.resolve();
+    if (!topos.js) topos.js = new Promise((ok, ko) => {
+      const sc = document.createElement("script"); sc.src = TOPOS_JS; sc.onload = ok; sc.onerror = ko; document.head.appendChild(sc);
+    });
+    return topos.js;
+  }
+  async function renderTopos(card, key) {
+    const body = card.querySelector(".nuc-topos-body");
+    body.innerHTML = '<p class="nuc-muted">Looking for this crag on theCrag… (the first time can take up to a minute)</p>';
+    try {
+      if (!topos.info || topos.info.key !== key) {
+        // Nombre y zona tal como los da 8a.nu: de nuestros datos de condiciones (en caché casi siempre).
+        const d = state.key === key && state.data ? state.data : await (await fetch(`/_proxy/conditions/${key}/data`)).json();
+        if (!d.crag) throw new Error(d.error || "no crag data");
+        topos.info = { key, country: key.split("/")[1], area: d.crag.area || "", crag: d.crag.name };
+      }
+      await loadToposJs();
+      if (!card.isConnected) return;
+      body.innerHTML = "";
+      const host = document.createElement("div");
+      body.appendChild(host);
+      window.tcTopos.render(host, { country: topos.info.country, area: topos.info.area, crag: topos.info.crag });
+      topos.rendered = key;
+    } catch (e) {
+      body.innerHTML = `<p class="nuc-muted">Couldn't load the topos: ${esc(String(e.message || e))}</p>`;
+    }
+  }
+  function toposMount() {
+    const m = location.pathname.match(CRAG_PATH);
+    let card = document.getElementById("nuc-topos");
+    if (!m) { if (card) card.remove(); return; }
+    const key = m.slice(1, 4).join("/");
+    if (card && card.isConnected && card.dataset.key === key) return;
+    if (card) card.remove();
+    const hdr = Array.from(document.querySelectorAll(".crag-mobile-header, .crag-header")).find((h) => h.offsetWidth > 0);
+    if (!hdr) return;
+    const after = (state.root && state.root.isConnected && state.root.parentElement === hdr.parentElement) ? state.root : hdr;
+    card = document.createElement("section");
+    card.id = "nuc-topos";
+    card.className = "nuc nuc-topos";
+    card.dataset.key = key;
+    const open = localStorage.getItem(TOPOS_OPEN) === "1";
+    card.innerHTML = `<div class="nuc-card"><button type="button" class="nuc-pad nuc-row mg-toggle" data-topos="1"><h2>Topos (theCrag)</h2><span>${open ? "▴" : "▾ photos with lines, your sends in green"}</span></button><div class="nuc-topos-body nuc-pad" ${open ? "" : "hidden"}></div></div>`;
+    after.after(card);
+    card.querySelector("[data-topos]").addEventListener("click", () => {
+      const now = localStorage.getItem(TOPOS_OPEN) !== "1";
+      localStorage.setItem(TOPOS_OPEN, now ? "1" : "0");
+      card.querySelector(".mg-toggle span").textContent = now ? "▴" : "▾ photos with lines, your sends in green";
+      const b = card.querySelector(".nuc-topos-body");
+      b.hidden = !now;
+      if (now && !b.childElementCount) renderTopos(card, key);
+    });
+    if (open) renderTopos(card, key);
+  }
+  function tick() { try { if (hydrated()) { mapButton(); menuEntry(); cragChip(); mount(); toposMount(); } } catch (e) { console.warn("nuc", e); } }
   // Versión nueva: la pestaña de 8a.nu puede llevar horas abierta sin recargar (es una SPA). Se mira al volver a ella
   // y cada 5 min si el código del proxy ha cambiado y, si es así, se ofrece recargar.
   const MY_VERSION = (document.currentScript && document.currentScript.dataset.nucVersion) ||

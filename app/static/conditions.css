@@ -245,3 +245,4 @@ html.mg-noscroll, html.mg-noscroll body { overflow: hidden !important; }
 .mg-hours td.mg-na { color: #b5b5ae; }
 .mg-hours .mg-wc i { display: inline-block; margin-right: 2px; }
 .mg-hours .mg-wc b { color: #b3263b; font-weight: 600; }
+.nuc-topos { margin-top: 12px; }
