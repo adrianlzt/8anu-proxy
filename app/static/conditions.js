@@ -570,14 +570,17 @@
         // Nombre y zona tal como los da 8a.nu: de nuestros datos de condiciones (en caché casi siempre).
         const d = state.key === key && state.data ? state.data : await (await fetch(`/_proxy/conditions/${key}/data`)).json();
         if (!d.crag) throw new Error(d.error || "no crag data");
-        topos.info = { key, country: key.split("/")[1], area: d.crag.area || "", crag: d.crag.name };
+        topos.info = { key, country: key.split("/")[1], area: d.crag.area || "", crag: d.crag.name, sectors: d.crag.sectors || [] };
       }
       await loadToposJs();
       if (!card.isConnected) return;
       body.innerHTML = "";
       const host = document.createElement("div");
       body.appendChild(host);
-      window.tcTopos.render(host, { country: topos.info.country, area: topos.info.area, crag: topos.info.crag });
+      // En la página de un sector (/routes?sector=… o /sectors/…), solo sus croquis (thecrag-proxy cae a la escuela si no casa).
+      const slug = new URLSearchParams(location.search).get("sector") || (location.pathname.match(/\/sectors\/([a-z0-9-]+)/) || [])[1];
+      const sector = slug && (topos.info.sectors.find((z) => z.slug === slug) || {}).name;
+      window.tcTopos.render(host, { country: topos.info.country, area: topos.info.area, crag: topos.info.crag, ...(sector ? { sector } : {}) });
       topos.rendered = key;
     } catch (e) {
       body.innerHTML = `<p class="nuc-muted">Couldn't load the topos: ${esc(String(e.message || e))}</p>`;
@@ -588,7 +591,8 @@
     let card = document.getElementById("nuc-topos");
     if (!m) { if (card) card.remove(); return; }
     const key = m.slice(1, 4).join("/");
-    if (card && card.isConnected && card.dataset.key === key) return;
+    const ckey = key + "|" + (new URLSearchParams(location.search).get("sector") || (location.pathname.match(/\/sectors\/([a-z0-9-]+)/) || [])[1] || "");
+    if (card && card.isConnected && card.dataset.key === ckey) return;
     if (card) card.remove();
     const hdr = Array.from(document.querySelectorAll(".crag-mobile-header, .crag-header")).find((h) => h.offsetWidth > 0);
     if (!hdr) return;
@@ -596,7 +600,7 @@
     card = document.createElement("section");
     card.id = "nuc-topos";
     card.className = "nuc nuc-topos";
-    card.dataset.key = key;
+    card.dataset.key = ckey;
     const open = localStorage.getItem(TOPOS_OPEN) === "1";
     card.innerHTML = `<div class="nuc-card"><button type="button" class="nuc-pad nuc-row mg-toggle" data-topos="1"><h2>Topos (theCrag)</h2><span>${open ? "▴" : "▾ photos with lines, your sends in green"}</span></button><div class="nuc-topos-body nuc-pad" ${open ? "" : "hidden"}></div></div>`;
     after.after(card);

@@ -22,7 +22,7 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 BASE = "https://www.thecrag.com"
-PAUSE = 8.0
+PAUSE = 15.0  # lo que aguanta el WAF compartido con thecrag-proxy (los croquis de Adrián)
 MAX_PAGES = 30
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
 PROFILE = Path.home() / ".cache" / "tc-clearance-profile"  # receta de ~/Documentos/escalada/thecrag-access
