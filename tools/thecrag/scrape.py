@@ -142,7 +142,7 @@ async def crawl(pg, root: str, out: list[dict], sectors: list[str], state: dict 
 
 def secret(entry: str, field: str | None = None) -> str:
     import subprocess
-    args = ["gopass", "show", entry] + ([field] if field else ["-o"])
+    args = ["gopass", "show"] + ([entry, field] if field else ["-o", entry])
     return subprocess.run(args, capture_output=True, text=True, check=True).stdout.strip()
 
 
