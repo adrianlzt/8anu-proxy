@@ -127,6 +127,23 @@ async def _aspect(app, key: str, lat: float, lon: float) -> dict:
     return aspect.current(key)
 
 
+async def info_json(request: Request) -> Response:
+    """Nombre, zona y sectores de la escuela tal como los da 8a.nu (para los croquis de theCrag): sin tiempo ni
+    coordenadas, que muchas escuelas no tienen."""
+    key = _key(request)
+    if not key:
+        return JSONResponse({"error": "bad crag"}, status_code=400)
+    try:
+        crag, sectors, _ = await _crag(request.app, key)
+    except LookupError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    items = sectors.get("items", sectors) if isinstance(sectors, dict) else sectors
+    return JSONResponse({
+        "name": crag.get("cragName"), "area": crag.get("areaName") or "", "country": crag.get("countrySlug"),
+        "sectors": [{"name": z.get("sectorName") or z.get("name"), "slug": z.get("sectorSlug") or z.get("slug")} for z in items or []],
+    })
+
+
 async def conditions_json(request: Request) -> Response:
     key = _key(request)
     if not key:
@@ -231,6 +248,7 @@ async def version_json(_: Request) -> Response:
 CRAG = "{cat}/{country}/{crag}"
 routes = [
     Route(f"/_proxy/conditions/{CRAG}/data", conditions_json),
+    Route(f"/_proxy/conditions/{CRAG}/info", info_json),
     Route(f"/_proxy/conditions/{CRAG}/meteo", meteo_json),
     Route(f"/_proxy/conditions/{CRAG}/aspect", set_aspect, methods=["POST"]),
     Route(f"/_proxy/conditions/{CRAG}/webcams", add_webcam, methods=["POST"]),

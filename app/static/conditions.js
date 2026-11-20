@@ -567,10 +567,10 @@
     body.innerHTML = '<p class="nuc-muted">Looking for this crag on theCrag… (the first time can take up to a minute)</p>';
     try {
       if (!topos.info || topos.info.key !== key) {
-        // Nombre y zona tal como los da 8a.nu: de nuestros datos de condiciones (en caché casi siempre).
-        const d = state.key === key && state.data ? state.data : await (await fetch(`/_proxy/conditions/${key}/data`)).json();
-        if (!d.crag) throw new Error(d.error || "no crag data");
-        topos.info = { key, country: key.split("/")[1], area: d.crag.area || "", crag: d.crag.name, sectors: d.crag.sectors || [] };
+        // Nombre, zona y sectores tal como los da 8a.nu (no hacen falta coordenadas).
+        const d = await (await fetch(`/_proxy/conditions/${key}/info`)).json();
+        if (!d.name) throw new Error(d.error || "no crag data");
+        topos.info = { key, country: d.country || key.split("/")[1], area: d.area, crag: d.name, sectors: d.sectors };
       }
       await loadToposJs();
       if (!card.isConnected) return;
