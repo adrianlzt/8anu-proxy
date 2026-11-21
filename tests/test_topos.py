@@ -55,7 +55,7 @@ def src(tmp_path):
             "premium_approach": "Walk __Sector A:__ 5 min", "walkingTime": 15, "rock_type": "Limestone",
             "crag_coords_premium": {"latitude": 42.1, "longitude": 1.3},
             "gallery": {"access": [ACCESS]},
-            "sectors": [{"sectorSlug": "bel-canto", "sectorName": "Bel Canto", "ordering": 2, "topos": [HASH]},
+            "sectors": [{"sectorSlug": "bel-canto", "sectorName": "Bel Canto", "ordering": 2, "topos": [HASH, "c" * 32]},
                         {"sectorSlug": "vacio", "sectorName": "Vacío", "ordering": 1, "topos": []}]}
     (s / "datos" / "escuelas.jsonl").write_text(json.dumps(crag) + "\n")
     (s / "crops" / "spain" / "nargo").mkdir(parents=True)
@@ -65,7 +65,8 @@ def src(tmp_path):
     via = {"zlaggableId": 77, "zlaggableName": "Espàrrecs i Coliflors", "zlaggableSlug": "esparrecs", "difficulty": "7a+",
            "topo": HASH, "topo_num": "30", "path": [[300, 500], [310, 100]], "reference_width": 600, "height": 30,
            "totalAscents": 269, "sectorSlug": "bel-canto", "countrySlug": "spain", "cragSlug": "nargo"}
-    (s / "datos" / "vias.jsonl").write_text(json.dumps(via) + "\n")
+    via2 = dict(via, zlaggableId=78, zlaggableName="Sin foto", topo="c" * 32, topo_num="31", reference_width=500)
+    (s / "datos" / "vias.jsonl").write_text(json.dumps(via) + "\n" + json.dumps(via2) + "\n")
     return s
 
 
@@ -80,7 +81,7 @@ def data_dir(tmp_path, monkeypatch, src):
     d = tmp_path / "data"
     monkeypatch.setattr(store, "DATA_DIR", d)
     out = run_import(src, d)
-    assert "croquis 1" in out and "fotos de acceso 1" in out and "vías con trazo 1" in out
+    assert "croquis 1" in out and "fotos de acceso 1" in out and "vías con trazo 2" in out and "(missing) 1" in out
     return d
 
 
@@ -105,6 +106,15 @@ def test_import_and_crag_data(data_dir):
     assert len(topos.crag_data("spain", "nargo")["topos"]) == 1
 
 
+def test_missing_image_kept_aside(data_dir):
+    with store.connect() as db:
+        row = db.execute("SELECT status, width, file FROM topo WHERE hash = ?", ("c" * 32,)).fetchone()
+        pts = db.execute("SELECT points FROM topo_route WHERE topo = ?", ("c" * 32,)).fetchone()[0]
+    assert row["status"] == "missing" and row["width"] == 500 and row["file"] == ""
+    assert json.loads(pts)[0] == [300, 500]  # sin escalar: en píxeles de reference_width
+    assert [t["tid"] for t in topos.crag_data("spain", "nargo")["topos"]] == [HASH]
+
+
 def test_sent_in_crag_data(data_dir, monkeypatch):
     topos.ticks.set([{"crag_name": "Coll de Nargó", "zlaggable_name": "Espàrrecs i Coliflors", "difficulty": "7a+", "d": "2024-01-02"}], "test")
     try:
@@ -123,7 +133,7 @@ def client(data_dir, monkeypatch):
 
 def test_api(client):
     r = client.get("/_proxy/topos/sportclimbing/spain/nargo?sector=bel-canto")
-    assert r.status_code == 200 and r.json()["topos"][0]["heading"] == "Bel Canto"
+    assert r.status_code == 200 and r.json()["topos"][0]["heading"] == "Bel Canto · 1/2"
     assert client.get("/_proxy/topos/sportclimbing/spain/nope").json()["empty"] is True
     assert client.get("/_proxy/topos/sportclimbing/spain/nargo?sector=BAD!").status_code == 400
     r = client.get(f"/_proxy/topos/img/{HASH}.jpg")

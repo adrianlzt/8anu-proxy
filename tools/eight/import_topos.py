@@ -87,18 +87,24 @@ def main() -> None:
                     f = src / "crops" / country / slug / f"{ss}--{h}.jpg"
                     if not f.exists():
                         f = src / "accesos" / country / slug / f"topo--{h}.jpg"
-                    if not f.exists():
-                        n_missing += 1
-                        continue
-                    dst = topos_dir / f"{h}.jpg"
-                    link(f, dst)
-                    wh = jpeg_size(dst)
+                    heading = sname + (f" · {j + 1}/{len(hashes)}" if len(hashes) > 1 else "")
+                    blank = topos_dir / "blank" / f"{h}.jpg"
+                    wh = None
+                    if f.exists():
+                        dst = topos_dir / f"{h}.jpg"
+                        link(f, dst)
+                        wh = jpeg_size(dst)
                     if not wh:
+                        # Sin imagen pintada: queda apuntado («missing») para que fetch_blank.py baje la foto en blanco y
+                        # el visor pinte las líneas; hasta entonces no se enseña.
+                        if not db.execute("SELECT 1 FROM topo WHERE hash = ? AND status = 'ok'", (h,)).fetchone():
+                            db.execute(
+                                "INSERT OR REPLACE INTO topo (hash, source, kind, crag, sector, sector_name, heading, file, width, "
+                                "height, baked, blank, ordering, status, updated) VALUES (?, '8a', 'topo', ?, ?, ?, ?, '', NULL, NULL, 1, NULL, ?, 'missing', ?)",
+                                (h, key, ss, sname, heading, i * 100 + j, now))
                         n_missing += 1
                         continue
                     sizes[h] = wh
-                    blank = topos_dir / "blank" / f"{h}.jpg"
-                    heading = sname + (f" · {j + 1}/{len(hashes)}" if len(hashes) > 1 else "")
                     db.execute(
                         "INSERT OR REPLACE INTO topo (hash, source, kind, crag, sector, sector_name, heading, file, width, "
                         "height, baked, blank, ordering, status, updated) VALUES (?, '8a', 'topo', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 'ok', ?)",
@@ -123,14 +129,17 @@ def main() -> None:
                 db.commit()
                 print(f"  {n_crags} escuelas, {n_topos} croquis, {n_access} fotos de acceso", flush=True)
         db.commit()
-        print(f"escuelas {n_crags}, croquis {n_topos}, fotos de acceso {n_access}, sin imagen {n_missing}")
+        print(f"escuelas {n_crags}, croquis {n_topos}, fotos de acceso {n_access}, sin imagen (missing) {n_missing}")
 
     vias = src / "datos" / "vias.jsonl"
     if not vias.exists():
         print("sin datos/vias.jsonl todavía: los trazos se importan cuando exista (--only-routes)")
         return
     if not sizes:
-        sizes = {r["hash"]: (r["width"], r["height"]) for r in db.execute("SELECT hash, width, height FROM topo")}
+        sizes = {r["hash"]: (r["width"], r["height"]) for r in db.execute("SELECT hash, width, height FROM topo WHERE status = 'ok'")}
+    # Los croquis sin imagen aún: los trazos se guardan en píxeles de reference_width (y ese ancho en la tabla);
+    # fetch_blank.py los reescala al bajar la foto.
+    missing = {r["hash"] for r in db.execute("SELECT hash FROM topo WHERE status = 'missing'")}
     n_routes = n_skipped = 0
     for line in open(vias, encoding="utf-8"):
         try:
@@ -138,15 +147,20 @@ def main() -> None:
         except ValueError:
             continue
         h = v.get("topo")
-        if not h or h not in sizes or (a.country and v.get("countrySlug") != a.country):
+        if not h or (h not in sizes and h not in missing) or (a.country and v.get("countrySlug") != a.country):
             n_skipped += 1
             continue
         rid = str(v.get("zlaggableId") or v.get("unifiedId") or "")
         if not rid:
             continue
-        w = sizes[h][0]
-        ref = v.get("reference_width") or w
-        k = w / ref if ref else 1.0
+        ref = v.get("reference_width") or 0
+        if h in sizes:
+            w = sizes[h][0]
+            k = w / ref if ref else 1.0
+        else:
+            k = 1.0
+            if ref:
+                db.execute("UPDATE topo SET width = ? WHERE hash = ? AND status = 'missing'", (ref, h))
         pts = [[round(p[0] * k, 1), round(p[1] * k, 1)] for p in (v.get("path") or []) if isinstance(p, list) and len(p) >= 2]
         db.execute(
             "INSERT OR REPLACE INTO topo_route (topo, rid, num, name, grade, points, slug, sector, height, ascents) "

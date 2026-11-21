@@ -10,6 +10,7 @@ ya están. Deja cada foto en DATA_DIR/topos/blank/<hash>.jpg y apunta `blank` en
 """
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -38,11 +39,12 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     cookie = a.cookie.expanduser().read_text().strip()
     db = store.connect()
-    todo = [r["hash"] for r in db.execute("SELECT hash FROM topo WHERE kind = 'topo' AND source = '8a' AND blank IS NULL ORDER BY crag, ordering")]
-    print(f"{len(todo)} croquis sin versión en blanco", flush=True)
+    rows = db.execute("SELECT hash, status, width FROM topo WHERE kind = 'topo' AND source = '8a' AND blank IS NULL ORDER BY status DESC, crag, ordering").fetchall()
+    todo = [(r["hash"], r["status"], r["width"]) for r in rows]
+    print(f"{len(todo)} croquis sin versión en blanco ({sum(1 for t in todo if t[1] == 'missing')} sin ninguna imagen)", flush=True)
     s = requests.Session(impersonate="firefox", timeout=60)
     n_ok = n_fail = 0
-    for i, h in enumerate(todo):
+    for i, (h, status, old_w) in enumerate(todo):
         if a.limit and n_ok >= a.limit:
             break
         dst = out / f"{h}.jpg"
@@ -73,9 +75,20 @@ def main() -> None:
             dst.unlink(missing_ok=True)
             n_fail += 1
             continue
-        # El trazo de las vías está en píxeles de la foto pintada: si la blanca tiene otro tamaño, se reescalan en el
-        # visor con width/height (viewBox), así que basta con guardar el tamaño real de la que se enseña.
-        db.execute("UPDATE topo SET blank = ?, updated = ? WHERE hash = ?", (str(dst), time.time(), h))
+        if status == "missing":
+            # Sin foto pintada: la blanca es la única. Los trazos estaban en píxeles de reference_width (width):
+            # se reescalan al ancho real.
+            k = wh[0] / old_w if old_w else 1.0
+            if k != 1.0:
+                for r in db.execute("SELECT rid, points FROM topo_route WHERE topo = ?", (h,)).fetchall():
+                    pts = [[round(p[0] * k, 1), round(p[1] * k, 1)] for p in json.loads(r["points"] or "[]")]
+                    db.execute("UPDATE topo_route SET points = ? WHERE topo = ? AND rid = ?", (json.dumps(pts), h, r["rid"]))
+            db.execute("UPDATE topo SET blank = ?, file = ?, width = ?, height = ?, status = 'ok', updated = ? WHERE hash = ?",
+                       (str(dst), str(dst), wh[0], wh[1], time.time(), h))
+        else:
+            # El trazo de las vías está en píxeles de la foto pintada: si la blanca tiene otro tamaño, se reescala en el
+            # visor con width/height (viewBox) porque la proporción es la misma.
+            db.execute("UPDATE topo SET blank = ?, updated = ? WHERE hash = ?", (str(dst), time.time(), h))
         db.commit()
         n_ok += 1
         if n_ok % 100 == 0:
