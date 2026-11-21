@@ -615,7 +615,20 @@
     });
     if (open) renderTopos(card, key);
   }
-  function tick() { try { if (hydrated()) { mapButton(); menuEntry(); cragChip(); mount(); toposMount(); } } catch (e) { console.warn("nuc", e); } }
+  // Con sesión iniciada, 8a.nu deja la página fija a la altura de la pantalla (solo se desplaza su lista de vías): la
+  // tarjeta de croquis no se alcanzaría con el scroll. Entonces se ajusta a lo que queda de pantalla y se desplaza ella.
+  function toposFit() {
+    const body = document.querySelector("#nuc-topos .nuc-topos-body");
+    if (!body || body.hidden) return;
+    const se = document.scrollingElement || document.documentElement;
+    const vh = (window.visualViewport && window.visualViewport.height) || innerHeight;
+    const fixed = se.scrollHeight <= innerHeight + 2;
+    if (!fixed) { if (body.style.maxHeight) { body.style.maxHeight = ""; body.classList.remove("nuc-topos-scroll"); } return; }
+    const h = Math.max(200, Math.floor(vh - body.getBoundingClientRect().top - 8)) + "px";
+    if (body.style.maxHeight !== h) body.style.maxHeight = h;
+    body.classList.add("nuc-topos-scroll");
+  }
+  function tick() { try { if (hydrated()) { mapButton(); menuEntry(); cragChip(); mount(); toposMount(); toposFit(); } } catch (e) { console.warn("nuc", e); } }
   // Versión nueva: la pestaña de 8a.nu puede llevar horas abierta sin recargar (es una SPA). Se mira al volver a ella
   // y cada 5 min si el código del proxy ha cambiado y, si es así, se ofrece recargar.
   const MY_VERSION = (document.currentScript && document.currentScript.dataset.nucVersion) ||
