@@ -53,6 +53,8 @@ def main() -> None:
     total_c = total_s = 0
     for f in sorted(outdir.glob("*.json")):
         d = json.load(open(f))
+        if "crag" not in d:  # status.json y escuelas a medias (.partial.json)
+            continue
         nodes = d["nodes"]
         if not nodes:
             continue
@@ -66,7 +68,8 @@ def main() -> None:
         for s in sectors.get(key, []):
             best = None
             for n in nodes[1:]:
-                for label in (n.get("label"), n.get("name")):
+                # 8a.nu a veces antepone el nombre de la escuela al del sector («El Vermell del Xincarró Dreta» = «Dreta»).
+                for label in (n.get("label"), n.get("name"), f"{root['name']} {n.get('label') or n.get('name') or ''}"):
                     sim = difflib.SequenceMatcher(None, norm(label), norm(s["name"])).ratio() if norm(label) else 0
                     if sim >= 0.8 and (best is None or sim > best[0]):
                         best = (sim, n)
