@@ -29,23 +29,6 @@ def test_jpeg_size(tmp_path):
     assert topos.jpeg_size(p) is None
 
 
-def test_norm_and_grades():
-    assert topos.norm("Espàrrecs i Coliflors") == "esparrecs i coliflors"
-    assert topos.norm("The Egg") == "egg"
-    assert topos.grade_index("7a+") - topos.grade_index("7a") == 1
-    assert topos.grade_index("6b/6b+") == topos.grade_index("6b")
-
-
-def test_ticks_match():
-    t = topos.Ticks()
-    t.set([{"crag_name": "Coll de Nargó", "zlaggable_name": "Espàrrecs i Coliflors", "difficulty": "7a+", "d": "2024-01-02"},
-           {"crag_name": "Otra", "zlaggable_name": "Repetida", "difficulty": "6b", "d": "2023-05-05"}], "test")
-    assert t.match("Esparrecs i coliflors", "7a+", "Coll de Nargo")["status"] == "sent"
-    assert t.match("Repetida", "6b+", "Coll de Nargo")["status"] == "maybe"
-    assert t.match("Repetida", "8a", "Coll de Nargo") is None
-    assert t.match("Nada", "6a", "Coll de Nargo") is None
-
-
 @pytest.fixture
 def src(tmp_path):
     """Una carpeta como ~/tmp/8a-alias con una escuela, un croquis, una foto de acceso y una vía con trazo."""
@@ -97,7 +80,7 @@ def test_import_and_crag_data(data_dir):
     r = t["routes"][0]
     assert r["num"] == "30" and r["name"] == "Espàrrecs i Coliflors" and r["ascents"] == 269 and r["pop"] == 100
     assert r["points"][0] == {"x": 600.0, "y": 1000.0, "t": ""}  # escalado 1200/600
-    assert r["url8a"] == "/crags/sportclimbing/spain/nargo/sectors/bel-canto/routes/esparrecs"
+    assert r["url8a"] == "/crags/sportclimbing/spain/nargo/sectors/bel-canto/routes/esparrecs" and r["slug"] == "esparrecs"
     # Un sector sin croquis propios: los de la escuela.
     assert len(topos.crag_data("spain", "nargo", "vacio")["topos"]) == 1
     assert topos.crag_data("spain", "otra") is None
@@ -115,18 +98,8 @@ def test_missing_image_kept_aside(data_dir):
     assert [t["tid"] for t in topos.crag_data("spain", "nargo")["topos"]] == [HASH]
 
 
-def test_sent_in_crag_data(data_dir, monkeypatch):
-    topos.ticks.set([{"crag_name": "Coll de Nargó", "zlaggable_name": "Espàrrecs i Coliflors", "difficulty": "7a+", "d": "2024-01-02"}], "test")
-    try:
-        r = topos.crag_data("spain", "nargo")["topos"][0]["routes"][0]
-        assert r["sent"] == "sent" and r["sent_info"]["date"] == "2024-01-02"
-    finally:
-        topos.ticks.set([], "none")
-
-
 @pytest.fixture
 def client(data_dir, monkeypatch):
-    monkeypatch.setattr(topos.Ticks, "run", lambda self, app: __import__("asyncio").sleep(0))
     with TestClient(main.app, base_url="https://8a.adrianlzt.com") as c:
         yield c
 

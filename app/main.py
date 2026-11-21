@@ -305,7 +305,6 @@ async def lifespan(app: Starlette):
     app.state.plain = AsyncSession(timeout=20)
     app.state.sem = asyncio.Semaphore(MAX_CONCURRENCY)
     workers = [asyncio.create_task(aspect.worker(app, source)) for source in ("terrain", "osm")]
-    workers.append(asyncio.create_task(topos.ticks.run(app)))
     try:
         yield
     finally:

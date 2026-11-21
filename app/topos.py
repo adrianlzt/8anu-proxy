@@ -13,10 +13,8 @@ Rutas (todas con la contraseña del proxy, si la hay: son contenido de pago):
 - `GET /_proxy/topos/img/<hash>.jpg` → la foto (inmutable).
 - `GET /_proxy/topos/<cat>/<país>/<escuela>/page` → página suelta con el visor (para probar y para guardar sin red).
 
-Encadenes: las ascensiones salen del Postgres de 8anu-dashboard por la API de su Grafana (lectura anónima), como en
-el proxy de theCrag; se guardan en `DATA_DIR/ascents.json` y se refrescan cada `TICKS_REFRESH_H` horas. Las vías de
-8a.nu se cruzan por nombre de escuela y de vía (ambos vienen de 8a.nu, así que casan tal cual); si solo coincide el
-nombre y el grado anda cerca, `maybe`.
+Encadenes: los pone el visor con la sesión de 8a.nu de quien mira (`/api/dotnet/me` y la lista de ascensiones de ese
+usuario por el proxy, con su cookie), así cada uno ve los suyos; el servidor no guarda ascensiones de nadie.
 """
 
 import asyncio
@@ -27,7 +25,6 @@ import os
 import re
 import struct
 import time
-import unicodedata
 from pathlib import Path
 
 from starlette.requests import Request
@@ -39,34 +36,12 @@ from . import store
 log = logging.getLogger("8anu-proxy.topos")
 
 TOPOS_DIR = Path(os.environ.get("TOPOS_DIR", store.DATA_DIR / "topos"))
-GRAFANA = os.environ.get("TICKS_GRAFANA", "https://8anu.adrianlzt.com").rstrip("/")
-DS_UID = os.environ.get("TICKS_DS_UID", "aet0jntondqtcc")
-USER_SLUG = os.environ.get("TICKS_USER", "adrian-lopez-lrxzc")
-REFRESH_H = float(os.environ.get("TICKS_REFRESH_H", "6"))
 SLUG = re.compile(r"[a-z0-9-]{1,120}")
 HASH = re.compile(r"[a-z0-9-]{4,80}")
 CATS = {0: "sportclimbing", 1: "bouldering", "sportclimbing": "sportclimbing", "bouldering": "bouldering"}
-FR = ["1", "2", "3", "4", "4+", "5", "5+", "5a", "5b", "5c", "6a", "6a+", "6b", "6b+", "6c", "6c+", "7a", "7a+", "7b",
-      "7b+", "7c", "7c+", "8a", "8a+", "8b", "8b+", "8c", "8c+", "9a", "9a+", "9b", "9b+", "9c"]  # fmt: skip
-_FR_INDEX = {g: i for i, g in enumerate(FR)}
-_ARTICLES = ("the", "la", "el", "los", "las", "les", "le", "l", "il", "lo", "der", "die", "das")
 
 
 # --- utilidades -------------------------------------------------------------------------------------------------------
-
-def norm(s: str) -> str:
-    """Nombre comparable: sin acentos ni signos, minúsculas, solo letras latinas y dígitos, sin artículo inicial."""
-    s = unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode().lower()
-    words = re.findall(r"[a-z0-9]+", s)
-    if len(words) > 1 and words[0] in _ARTICLES:
-        words = words[1:]
-    return " ".join(words)
-
-
-def grade_index(grade: str) -> int | None:
-    g = str(grade or "").strip().lower().split("/")[0].split(" ")[0]
-    return _FR_INDEX.get(g)
-
 
 def jpeg_size(path: Path) -> tuple[int, int] | None:
     """Ancho y alto de un JPEG leyendo solo las cabeceras (sin PIL)."""
@@ -115,97 +90,6 @@ def crag_key(cat: str, country: str, crag: str) -> str:
     return f"{country}/{crag}"
 
 
-# --- ascensiones de Adrián (Grafana) ------------------------------------------------------------------------------------
-
-class Ticks:
-    def __init__(self) -> None:
-        self.rows: list[dict] = []
-        self.by_name: dict[str, list[dict]] = {}
-        self.loaded_at = 0.0
-        self.source = "none"
-
-    @property
-    def cache(self) -> Path:
-        return store.DATA_DIR / "ascents.json"
-
-    def set(self, rows: list[dict], source: str) -> None:
-        self.rows = rows
-        self.by_name = {}
-        for r in rows:
-            r["_name"] = norm(r.get("zlaggable_name", ""))
-            r["_crag"] = norm(r.get("crag_name", ""))
-            r["_grade"] = grade_index(r.get("difficulty", ""))
-            self.by_name.setdefault(r["_name"], []).append(r)
-        self.loaded_at = time.time()
-        self.source = source
-
-    def load_cache(self) -> bool:
-        try:
-            d = json.loads(self.cache.read_text())
-        except (OSError, ValueError):
-            return False
-        self.set(d["ascents"], "cache")
-        self.loaded_at = d.get("at", 0)
-        return True
-
-    async def refresh(self, app) -> bool:
-        if not USER_SLUG:
-            return False
-        sql = ("select crag_name, sector_name, zlaggable_name, difficulty, type, to_char(date,'YYYY-MM-DD') as d "
-               f"from ascents where user_slug = '{USER_SLUG}' and project = false")
-        body = {"queries": [{"refId": "A", "datasource": {"uid": DS_UID}, "rawSql": sql, "format": "table"}],
-                "from": "now-1h", "to": "now"}
-        try:
-            r = await app.state.plain.post(f"{GRAFANA}/api/ds/query", json=body, timeout=60)
-            if r.status_code != 200:
-                raise RuntimeError(f"HTTP {r.status_code}")
-            frame = r.json()["results"]["A"]["frames"][0]
-            names = [f["name"] for f in frame["schema"]["fields"]]
-            rows = [dict(zip(names, vals)) for vals in zip(*frame["data"]["values"])]
-        except Exception as e:  # noqa: BLE001 — red, Grafana caída, formato: seguimos con lo que haya
-            log.warning("ascensiones de 8a.nu: no se pudieron refrescar (%s)", e)
-            return False
-        self.set(rows, "grafana")
-        try:
-            self.cache.parent.mkdir(parents=True, exist_ok=True)
-            self.cache.write_text(json.dumps({"at": self.loaded_at, "ascents": [
-                {k: v for k, v in row.items() if not k.startswith("_")} for row in rows]}))
-        except OSError as e:
-            log.warning("no se pudo guardar %s: %s", self.cache, e)
-        log.info("ascensiones de 8a.nu: %d (%s)", len(rows), USER_SLUG)
-        return True
-
-    async def run(self, app) -> None:
-        self.load_cache()
-        while True:
-            if time.time() - self.loaded_at > REFRESH_H * 3600 - 60:
-                await self.refresh(app)
-            await asyncio.sleep(600)
-
-    def match(self, name: str, grade: str, crag_name: str) -> dict | None:
-        """`{"status": sent|maybe, crag, grade, date}` o None."""
-        cands = self.by_name.get(norm(name))
-        if not cands:
-            return None
-        c = norm(crag_name)
-        g = grade_index(grade)
-        best = None
-        for r in cands:
-            if r["_crag"] == c:
-                st = "sent"
-            elif g is not None and r["_grade"] is not None and abs(g - r["_grade"]) <= 2:
-                st = "maybe"
-            else:
-                continue
-            if best is None or (st == "sent" and best["status"] != "sent") or (st == best["status"] and (r.get("d") or "") > (best.get("date") or "")):
-                best = {"status": st, "crag": r.get("crag_name"), "sector": r.get("sector_name"),
-                        "grade": r.get("difficulty"), "date": r.get("d"), "type": r.get("type")}
-        return best
-
-
-ticks = Ticks()
-
-
 # --- consultas ------------------------------------------------------------------------------------------------------------
 
 def image_url(h: str) -> str:
@@ -246,7 +130,6 @@ def crag_data(country: str, crag: str, sector: str = "") -> dict | None:
                 pts = [{"x": p[0], "y": p[1], "t": ""} for p in json.loads(r["points"] or "[]")]
             except (ValueError, TypeError, IndexError):
                 pts = []
-            m = ticks.match(r["name"] or "", r["grade"] or "", name)
             asc = r["ascents"]
             rs.append({
                 "id": r["rid"], "num": r["num"] or "", "name": r["name"] or "", "grade": r["grade"] or "",
@@ -254,7 +137,7 @@ def crag_data(country: str, crag: str, sector: str = "") -> dict | None:
                 "pop": round(100 * math.sqrt(asc / max_asc)) if asc else 0,
                 "height": f"{r['height']}m" if r["height"] else "",
                 "url8a": f"/crags/{cat}/{country}/{crag}/sectors/{r['sector'] or t['sector']}/routes/{r['slug']}" if r["slug"] else "",
-                "sent": m["status"] if m else None, "sent_info": m,
+                "slug": r["slug"] or "", "sector": r["sector"] or t["sector"],
             })
         rs.sort(key=lambda r: (int(re.sub(r"\D", "", r["num"]) or 0) if r["num"] else 10**6, r["name"]))
         topos.append({
@@ -275,7 +158,6 @@ def crag_data(country: str, crag: str, sector: str = "") -> dict | None:
                      "parking_coords_community", "heightRange", "exposition")}},
         "access": access, "topos": topos,
         "sectors": [{"slug": s.get("slug"), "name": s.get("name"), "topos": len(s.get("topos") or [])} for s in sectors],
-        "ticks": ticks.source, "ticks_at": ticks.loaded_at,
     }
 
 
@@ -311,7 +193,7 @@ async def crag_json(request: Request) -> Response:
     if data is None:  # sin nada en la base: lo justo para que el visor deje subir un croquis de papel
         data = {"crag": {"key": "/".join(k), "name": request.query_params.get("name", "") or k[2], "cat": k[0],
                          "country": k[1], "slug": k[2], "area": request.query_params.get("area", ""), "premium": {}},
-                "access": [], "topos": [], "sectors": [], "ticks": ticks.source, "ticks_at": ticks.loaded_at, "empty": True}
+                "access": [], "topos": [], "sectors": [], "empty": True}
     return JSONResponse(data, headers={"cache-control": "no-store"})
 
 

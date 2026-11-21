@@ -79,6 +79,58 @@
     return true;
   }
   function lineWidth(r) { return r.pop == null ? 3 : 1.5 + 8.5 * Math.min(100, r.pop) / 100; }
+  // --- Encadenes de quien mira: su sesión de 8a.nu pasa por el proxy, así que se le piden a 8a.nu su usuario
+  // (/api/dotnet/me) y sus ascensiones de esta escuela; cada uno ve las suyas y el servidor no guarda nada.
+  var FR = ["1", "2", "3", "4", "4+", "5", "5+", "5a", "5b", "5c", "6a", "6a+", "6b", "6b+", "6c", "6c+", "7a", "7a+", "7b", "7b+", "7c", "7c+", "8a", "8a+", "8b", "8b+", "8c", "8c+", "9a", "9a+", "9b", "9b+", "9c"];
+  var ARTICLES = { the: 1, la: 1, el: 1, los: 1, las: 1, les: 1, le: 1, l: 1, il: 1, lo: 1, der: 1, die: 1, das: 1 };
+  function nname(s) {   // nombre comparable: sin acentos ni signos, minúsculas, sin artículo inicial
+    var w = String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().match(/[a-z0-9]+/g) || [];
+    if (w.length > 1 && ARTICLES[w[0]]) w = w.slice(1);
+    return w.join(" ");
+  }
+  function gidx(g) { var i = FR.indexOf(String(g || "").trim().toLowerCase().split("/")[0].split(" ")[0]); return i < 0 ? null : i; }
+  function sendsFor(crag) {
+    var k = "nut-sends:" + crag.cat + "/" + crag.country + "/" + crag.slug;
+    try { var c = JSON.parse(sessionStorage.getItem(k) || "null"); if (c && Date.now() - c.at < 600000) return Promise.resolve(c.v); } catch (e) {}
+    function keep(v) { try { sessionStorage.setItem(k, JSON.stringify({ at: Date.now(), v: v })); } catch (e) {} return v; }
+    return fetch("/api/dotnet/me", { credentials: "same-origin", headers: { accept: "application/json" } }).then(function (r) { return r.ok ? r.json() : null; }).then(function (me) {
+      if (!me || !me.slug) return { user: null, list: [] };   // sin sesión: no se guarda, para verlo nada más entrar
+      var all = [];
+      function page(i) {
+        var q = new URLSearchParams({ category: crag.cat || "sportclimbing", pageIndex: i, pageSize: 1000, sortField: "date_desc", timeFilter: 0, gradeFilter: 0, typeFilter: "", includeProjects: "false", searchQuery: crag.name || "", showRepeats: "false" });
+        return fetch("/api/unification/ascent/v1/web/users/" + encodeURIComponent(me.slug) + "/ascents?" + q, { credentials: "same-origin", headers: { accept: "application/json" } })
+          .then(function (r) { return r.ok ? r.json() : { ascents: [] }; }).then(function (d) {
+            var a = d.ascents || [];
+            a.forEach(function (x) { if (!x.project) all.push({ n: x.zlaggableName, s: x.zlaggableSlug, c: x.cragSlug, cn: x.cragName, g: x.difficulty, d: String(x.date || "").slice(0, 10), t: x.type }); });
+            return a.length >= 1000 && i < 10 ? page(i + 1) : all;
+          });
+      }
+      return page(0).then(function (list) { return keep({ user: me.firstName ? (me.firstName + " " + (me.lastName || "")).trim() : me.slug, slug: me.slug, list: list }); });
+    }).catch(function () { return { user: null, list: [], error: true }; });
+  }
+  function applySends(topos, sends, crag) {
+    var bySlug = {}, byName = {};
+    (sends && sends.list || []).forEach(function (a) {
+      if (a.c === crag.slug && a.s) bySlug[a.s] = a;
+      (byName[nname(a.n)] = byName[nname(a.n)] || []).push(a);
+    });
+    topos.forEach(function (t) {
+      t.routes.forEach(function (r) {
+        var hit = null, st = null;
+        if (r.slug && bySlug[r.slug]) { hit = bySlug[r.slug]; st = "sent"; }
+        else {
+          var g = gidx(r.grade);
+          (byName[nname(r.name)] || []).forEach(function (a) {
+            var s2 = a.c === crag.slug || nname(a.cn) === nname(crag.name) ? "sent" : (g != null && gidx(a.g) != null && Math.abs(g - gidx(a.g)) <= 2 ? "maybe" : null);
+            if (s2 && (!st || (s2 === "sent" && st !== "sent"))) { st = s2; hit = a; }
+          });
+        }
+        r.sent = st;
+        r.sent_info = hit ? { crag: hit.cn, grade: hit.g, date: hit.d, type: hit.t } : null;
+      });
+    });
+  }
+
   function el(tag, attrs, children) {
     var e = document.createElement(tag);
     Object.keys(attrs || {}).forEach(function (k) { if (k === "text") e.textContent = attrs[k]; else e.setAttribute(k, attrs[k]); });
@@ -543,17 +595,22 @@
     container.textContent = "";
     container.appendChild(el("div", { class: "nut-msg", text: "Loading topos…" }));
     var q = opts.sector ? "?sector=" + encodeURIComponent(opts.sector) : "";
-    fetch("/_proxy/topos/" + opts.key + q, { credentials: "same-origin" }).then(function (r) {
+    var local = fetch("/_proxy/topos/" + opts.key + q, { credentials: "same-origin" }).then(function (r) {
       if (r.status === 401) throw new Error("the proxy asks for its password: reload the page and sign in");
       return r.json();
-    }).then(function (d) {
+    });
+    var sendsP = local.then(function (d) { return d.crag ? sendsFor(d.crag) : { user: null, list: [] }; });
+    Promise.all([local, sendsP]).then(function (res) {
+      var d = res[0], sends = res[1];
+      if (d.crag) applySends(d.topos || [], sends, d.crag);
       container.textContent = "";
       var counts = {};
       var legend = el("div", { class: "nut-legend" });
       ["sent", "none", "maybe"].forEach(function (k) {
         var i = el("i"); i.style.background = COLORS[k]; legend.appendChild(i);
-        legend.appendChild(document.createTextNode(k === "sent" ? "sent (8a.nu)" : k === "maybe" ? "same route elsewhere?" : "not sent"));
+        legend.appendChild(document.createTextNode(k === "sent" ? "sent" : k === "maybe" ? "same route elsewhere?" : "not sent"));
       });
+      legend.appendChild(document.createTextNode(sends.user ? " · sends of " + sends.user + " (8a.nu)" : sends.error ? " · couldn't read your 8a.nu sends" : " · sign in on 8a.nu to see your sends"));
       legend.appendChild(document.createTextNode(" · line width: ascents on 8a.nu"));
       if (opts.standalone && d.crag) legend.insertBefore(el("a", { href: "/crags/" + d.crag.key, text: d.crag.name + " on 8a.nu ↗ ", style: "margin-right:8px" }), legend.firstChild);
       container.appendChild(legend);
@@ -572,7 +629,7 @@
       });
       container.appendChild(bar);
       redraws = [];
-      var ctx = { container: container, opts: opts, crag: d.crag || null };
+      var ctx = { container: container, opts: opts, crag: d.crag || null, sends: sends };
       if (!d.sectors || !d.sectors.length) d.sectors = opts.sectors || [];
       if (d.crag) uploadForm(container, d, opts);
       if (opts.standalone) offlineButton(container.querySelector(".nut-tools") || container, d, opts);
@@ -592,14 +649,14 @@
       if (!(d.topos || []).length && !tc) tcHost.appendChild(el("div", { class: "nut-msg", text: "No topos for this crag yet." }));
       sourceBar(container, counts);
       if (opts.onLoad) opts.onLoad(d);
-      if (tc && tc.crag) theCrag(container, tcHost, tc, opts, counts);
+      if (tc && tc.crag) theCrag(container, tcHost, tc, opts, counts, ctx);
     }).catch(function (e) {
       container.textContent = ""; container.appendChild(el("div", { class: "nut-msg", text: "Couldn't load the topos (" + (e.message || e) + ")." }));
     });
   }
 
   // Los croquis de theCrag, del proxy de theCrag (mismo formato de croquis; su búsqueda puede tardar un minuto).
-  function theCrag(container, host, tc, opts, counts) {
+  function theCrag(container, host, tc, opts, counts, ctx) {
     host.textContent = "";
     host.appendChild(el("div", { class: "nut-msg", text: "Looking for this crag on theCrag… (the first time can take up to a minute)" }));
     var q = new URLSearchParams({ country: tc.country || "", area: tc.area || "", crag: tc.crag || "" });
@@ -618,7 +675,7 @@
         btn.addEventListener("click", function () {
           var m = /thecrag\.[a-z.]+(\/en\/climbing\/[a-z0-9\/_-]+)/i.exec(inp.value || "");
           if (!m) { inp.style.borderColor = "red"; return; }
-          theCrag(container, host, Object.assign({}, tc, { tc: m[1].replace(/\/(maps|photos|topos|routes|ascents)\/?$/, "") }), opts, counts);
+          theCrag(container, host, Object.assign({}, tc, { tc: m[1].replace(/\/(maps|photos|topos|routes|ascents)\/?$/, "") }), opts, counts, ctx);
         });
         msg.appendChild(inp); msg.appendChild(btn);
         host.appendChild(msg);
@@ -629,6 +686,8 @@
       link.appendChild(el("a", { href: THECRAG + d.crag.path, target: "_blank", text: (d.crag.name || "Crag") + " on theCrag ↗" }));
       link.appendChild(document.createTextNode(d.partial ? " · theCrag cut us off: partial" : ""));
       host.appendChild(link);
+      // Los encadenes que trae el proxy de theCrag son los de Adrián: se sustituyen por los de quien mira.
+      if (ctx && ctx.crag) applySends(d.topos, ctx.sends, ctx.crag);
       d.topos.forEach(function (t) { t.source = "thecrag"; host.appendChild(drawTopo(t, {})); });
       counts.thecrag = d.topos.length;
       sourceBar(container, counts);

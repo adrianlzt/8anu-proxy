@@ -88,10 +88,11 @@ trazo (puntos en píxeles de la foto), vengan de donde vengan:
 
 `GET /_proxy/topos/<cat>/<país>/<escuela>[?sector=]` devuelve ficha premium, fotos de acceso y croquis con vías;
 `/_proxy/topos/img/<hash>.jpg[?blank=1]` la foto; `…/page` una página suelta con el visor. Todo pide la contraseña
-del proxy (`PROXY_PASSWORD`): es contenido de pago. **Encadenes**: las ascensiones de Adrián salen del Postgres de
-8anu-dashboard por la API de su Grafana (`TICKS_GRAFANA`, `TICKS_USER`; caché `DATA_DIR/ascents.json`, refresco cada
-6 h) y se cruzan con las vías de 8a.nu por nombre de escuela y de vía (`sent`), o solo por nombre y grado cercano
-(`maybe`). En el visor: filtros All / Popular / Sent / Popular to do y por fuente; en las fotos con líneas pintadas,
+del proxy (`PROXY_PASSWORD`): es contenido de pago. **Encadenes**: los de quien mira, con su sesión de 8a.nu: el
+visor pide por el proxy `/api/dotnet/me` (su slug) y sus ascensiones de esa escuela (`ascent/v1/web/users/<slug>/
+ascents?searchQuery=<escuela>`, 10 min en sessionStorage) y cruza por slug de vía (`sent`) o por nombre (en la misma
+escuela `sent`; en otra con grado cercano `maybe`); sin sesión no hay verde. El servidor no guarda ascensiones. En
+el visor: filtros All / Popular / Sent / Popular to do y por fuente; en las fotos con líneas pintadas,
 tocar una vía la resalta (trazo invisible encima) y las encadenadas llevan un punto verde al final; «Log it on 8a.nu»
 abre su página de vía. El bloque «Access & approach» enseña la aproximación premium, parking y escuela en Google Maps
 y las fotos de acceso.
