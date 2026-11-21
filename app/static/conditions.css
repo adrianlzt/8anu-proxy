@@ -246,3 +246,5 @@ html.mg-noscroll, html.mg-noscroll body { overflow: hidden !important; }
 .mg-hours .mg-wc i { display: inline-block; margin-right: 2px; }
 .mg-hours .mg-wc b { color: #b3263b; font-weight: 600; }
 .nuc-topos { margin-top: 12px; }
+/* El visor de theCrag trae su propio scroll (75vh): dentro de la página se corta la lista de vías en el móvil. */
+#nuc-topos .tct { max-height: none; overflow: visible; }
