@@ -47,7 +47,16 @@
     ".nut-access{background:#fff;border:1px solid #ddd;border-radius:8px;margin:0 0 12px;overflow:hidden}.nut-access summary{padding:8px 10px;font-weight:600;cursor:pointer;background:#f4f4f4}" +
     ".nut-access .body{padding:8px 10px;font-size:13px}.nut-access p{margin:6px 0;white-space:pre-line}.nut-access .kv{color:#555;font-size:12px;margin:4px 0}" +
     ".nut-access .pics{display:flex;gap:6px;overflow-x:auto;padding:4px 0}.nut-access .pics img{height:110px;border-radius:4px;cursor:pointer;background:#333}" +
-    ".nut-access a.map{display:inline-block;margin:2px 10px 2px 0;color:#2a6fdb}";
+    ".nut-access a.map{display:inline-block;margin:2px 10px 2px 0;color:#2a6fdb}" +
+    ".nut-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 8px}.nut-tools button,.nut-ed button{border:1px solid #bbb;background:#fff;border-radius:4px;padding:4px 10px;font-size:13px;cursor:pointer}" +
+    ".nut-tools button.primary,.nut-ed button.primary{background:#8b1d8b;border-color:#8b1d8b;color:#fff}.nut-ed button.danger{color:#c00}" +
+    ".nut-form{background:#fff;border:1px solid #ddd;border-radius:8px;padding:10px;margin:0 0 10px;font-size:13px}.nut-form label{display:block;margin:4px 0}.nut-form input[type=text],.nut-form select{width:100%;box-sizing:border-box;padding:5px;font-size:14px}" +
+    ".nut-ed{background:#fff;padding:8px 10px;font-size:13px;border-top:1px solid #eee}.nut-ed .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0}" +
+    ".nut-ed input{padding:4px;font-size:13px}.nut-ed input.num{width:44px}.nut-ed input.nm{flex:1;min-width:120px}.nut-ed input.g{width:56px}" +
+    ".nut-ed .hint{color:#555}.nut-ed .cur{background:#eef7ff;border-radius:4px}.nut-ed .pick{max-height:200px;overflow:auto;border:1px solid #ddd;border-radius:4px}" +
+    ".nut-ed .pick div{padding:4px 8px;border-bottom:1px solid #f2f2f2;cursor:pointer}.nut-ed .pick div:hover{background:#f6f6f6}.nut-ed .pick b{color:#8b1d8b;margin-right:6px}" +
+    ".nut-wrap .ed .pt{fill:#fff;stroke:#1a3ab8;stroke-width:1.5}.nut-wrap .ed .cur .ln{stroke:#3af}.nut-wrap .ed .cur .pt{fill:#3af}.nut-wrap .ed .lbl text{font:bold 10px Tahoma,Arial;text-anchor:middle;fill:#000}" +
+    ".nut-topo.editing .nut-wrap{cursor:crosshair}";
   var EIGHT = location.origin;
   var COLORS = { sent: "#1fbf3f", maybe: "#e6a700", none: "#ff8c1a" };
   var FILTERS = [["all", "All"], ["pop", "Popular"], ["sent", "Sent"], ["todo", "Popular to do"]];
@@ -84,7 +93,8 @@
   function esc(s) { return String(s == null ? "" : s); }
   function num(r) { return parseInt(String(r.num || "").replace(/\D/g, ""), 10) || 0; }
 
-  function drawTopo(t) {
+  function drawTopo(t, ctx) {
+    ctx = ctx || {};
     var w = t.width || 650, h = t.height || 290, baked = !!t.baked;
     var img = el("img", { src: t.blank || t.image || t.thumb, alt: t.heading || "", loading: "lazy" });
     var svg = svgEl("svg", { viewBox: "0 0 " + w + " " + h, preserveAspectRatio: "none" });
@@ -124,7 +134,7 @@
         g.appendChild(svgEl("circle", { cx: pl.x, cy: pl.y, r: Math.max(4, w / 160), fill: color, stroke: "#fff", "stroke-width": 1.5 }));
       }
       var title = svgEl("title"); title.textContent = "#" + r.num + " " + r.name + " " + r.grade; g.appendChild(title);
-      g.addEventListener("click", function (ev) { ev.stopPropagation(); select(r, g); });
+      g.addEventListener("click", function (ev) { if (t._edit) return; ev.stopPropagation(); select(r, g); });
       svg.appendChild(g); groups.push(g); r._g = g;
     });
     var list = el("ul", { class: "nut-list" });
@@ -171,7 +181,10 @@
       if (r.url) { info.appendChild(document.createTextNode(" ")); info.appendChild(el("a", { href: THECRAG + r.url, target: "_blank", text: "theCrag ↗" })); }
       if (r.url8a) info.appendChild(el("a", { class: "nut-log", href: EIGHT + r.url8a, target: "_blank", text: "Log it on 8a.nu ↗" }));
     }
-    svg.addEventListener("click", function () { groups.forEach(function (x) { x.classList.remove("sel", "dim"); }); t.routes.forEach(function (x) { if (x._li) x._li.classList.remove("sel"); }); info.textContent = ""; });
+    svg.addEventListener("click", function (ev) {
+      if (t._edit) { t._edit.add(ev); return; }
+      groups.forEach(function (x) { x.classList.remove("sel", "dim"); }); t.routes.forEach(function (x) { if (x._li) x._li.classList.remove("sel"); }); info.textContent = "";
+    });
     var zoom = el("div", { class: "zoom" }, [img, svg]);
     zoom.style.aspectRatio = w + " / " + h;
     var wrap = el("div", { class: "nut-wrap" }, [zoom]);
@@ -182,9 +195,16 @@
     var head = el("div", { class: "nut-head" }, [src, el("span", { text: t.heading || "" }), el("span", { class: "sp" }),
       el("span", { text: t.routes.length ? t.routes.length + " routes" : "", style: "font-weight:normal;color:#666" })]);
     if (drawn.length && !baked) head.appendChild(linesBtn);
+    if (t.editable && ctx.container) {
+      var edBtn = el("button", { type: "button", title: "Edit routes", text: "✎" });
+      edBtn.addEventListener("click", function () { if (document.fullscreenElement) document.exitFullscreen(); editTopo(card, t, ctx, svg, info, list); });
+      head.appendChild(edBtn);
+    }
     head.appendChild(fsBtn);
     var card = el("div", { class: "nut-topo" }, [head, wrap, info, list]);
     card.dataset.source = t.source || "";
+    card.dataset.hash = t.tid || "";
+    t._svg = svg; t._size = [w, h];
     linesBtn.addEventListener("click", function () {
       var hid = card.classList.toggle("nolines");
       linesBtn.classList.toggle("hid", hid);
@@ -197,6 +217,210 @@
     });
     pinch(wrap, zoom, card);
     return card;
+  }
+
+
+  // --- Edición: croquis de papel (foto subida) y corrección de trazos --------------------------------------------------
+  function svgPoint(svg, ev, w, h) {
+    var r = svg.getBoundingClientRect();
+    return { x: Math.round((ev.clientX - r.left) / r.width * w * 10) / 10, y: Math.round((ev.clientY - r.top) / r.height * h * 10) / 10 };
+  }
+  function editTopo(card, t, ctx, svg, info, list) {
+    var w = t._size[0], h = t._size[1];
+    var routes = t.routes.map(function (r) { return { id: r.id, num: r.num, name: r.name, grade: r.grade, points: (r.points || []).map(function (p) { return { x: p.x, y: p.y }; }), slug: r.slug || "", sector: r.sector || "", height: r.height, ascents: r.ascents }; });
+    var cur = routes.length ? routes[routes.length - 1] : null;
+    card.classList.add("editing"); card.classList.remove("nolines");
+    list.style.display = "none"; info.style.display = "none";
+    var layer = svgEl("g", { class: "ed" });
+    Array.prototype.slice.call(svg.childNodes).forEach(function (n) { n.style && (n.style.display = "none"); });
+    svg.appendChild(layer);
+    var panel = el("div", { class: "nut-ed" });
+    card.appendChild(panel);
+    t._edit = { add: function (ev) {
+      if (!cur) { hint.textContent = "Pick or add a route first."; return; }
+      cur.points.push(svgPoint(svg, ev, w, h)); draw(); }
+    };
+    var hint = el("div", { class: "hint", text: "Tap the photo to add points to the selected route, from the bottom up. Routes added from 8a.nu get their name, grade and sends." });
+    function draw() {
+      layer.textContent = "";
+      routes.forEach(function (r) {
+        var g = svgEl("g", { class: r === cur ? "cur" : "" });
+        var pts = r.points.map(function (p) { return p.x + "," + p.y; }).join(" ");
+        if (r.points.length > 1) {
+          g.appendChild(svgEl("polyline", { class: "halo", points: pts, style: "stroke-width:6" }));
+          g.appendChild(svgEl("polyline", { class: "ln", points: pts, stroke: "#ff8c1a", style: "stroke-width:3.5" }));
+        }
+        r.points.forEach(function (p) { g.appendChild(svgEl("circle", { class: "pt", cx: p.x, cy: p.y, r: r === cur ? 5 : 3.5 })); });
+        if (r.points.length) {
+          var p0 = r.points[0], lbl = svgEl("g", { class: "lbl" });
+          lbl.appendChild(svgEl("rect", { x: p0.x - 9, y: Math.min(p0.y + 4, h - 16), width: 18, height: 14, rx: 2, fill: r === cur ? "#9fd3ff" : "#ffd24d" }));
+          var tx = svgEl("text", { x: p0.x, y: Math.min(p0.y + 4, h - 16) + 11 }); tx.textContent = r.num || "·"; lbl.appendChild(tx);
+          g.appendChild(lbl);
+        }
+        g.addEventListener("click", function (ev) { if (r !== cur) { ev.stopPropagation(); cur = r; draw(); } });
+        layer.appendChild(g);
+      });
+      fillPanel();
+    }
+    var pick = null;
+    function fillPanel() {
+      panel.textContent = "";
+      panel.appendChild(hint);
+      routes.forEach(function (r) {
+        var row = el("div", { class: "row" + (r === cur ? " cur" : "") });
+        var num = el("input", { class: "num", type: "text", value: r.num || "", placeholder: "#" });
+        var nm = el("input", { class: "nm", type: "text", value: r.name || "", placeholder: "route name" });
+        var g = el("input", { class: "g", type: "text", value: r.grade || "", placeholder: "7a" });
+        [num, nm, g].forEach(function (i) { i.addEventListener("input", function () { r.num = num.value.trim(); r.name = nm.value; r.grade = g.value.trim(); }); i.addEventListener("focus", function () { if (cur !== r) { cur = r; draw(); } }); });
+        row.appendChild(num); row.appendChild(nm); row.appendChild(g);
+        row.appendChild(el("span", { class: "hint", text: r.points.length + " pts" }));
+        var sel = el("button", { type: "button", text: r === cur ? "✓ selected" : "select" });
+        sel.addEventListener("click", function () { cur = r; draw(); });
+        row.appendChild(sel);
+        if (r === cur) {
+          var undo = el("button", { type: "button", text: "↶ point" }); undo.addEventListener("click", function () { r.points.pop(); draw(); }); row.appendChild(undo);
+          var rm = el("button", { type: "button", class: "danger", text: "remove" }); rm.addEventListener("click", function () { routes.splice(routes.indexOf(r), 1); cur = routes[routes.length - 1] || null; draw(); }); row.appendChild(rm);
+        }
+        panel.appendChild(row);
+      });
+      var add = el("div", { class: "row" });
+      var from8a = el("button", { type: "button", text: "+ route from 8a.nu" });
+      from8a.addEventListener("click", function () { pick8a(); });
+      var custom = el("button", { type: "button", text: "+ other route" });
+      custom.addEventListener("click", function () { routes.push({ id: "p" + Date.now().toString(36), num: String(routes.length + 1), name: "", grade: "", points: [], slug: "", sector: t.sector || "" }); cur = routes[routes.length - 1]; draw(); });
+      add.appendChild(from8a); add.appendChild(custom);
+      panel.appendChild(add);
+      if (pick) panel.appendChild(pick);
+      var acts = el("div", { class: "row" });
+      var save = el("button", { type: "button", class: "primary", text: "Save" });
+      save.addEventListener("click", function () {
+        save.disabled = true;
+        fetch("/_proxy/topos/" + t.tid + "/routes", { method: "PUT", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify(routes) })
+          .then(function (r) { return r.json(); }).then(function (d) { if (d.error) throw new Error(d.error); render(ctx.container, ctx.opts); })
+          .catch(function (e) { save.disabled = false; hint.textContent = "Couldn't save: " + (e.message || e); });
+      });
+      var cancel = el("button", { type: "button", text: "Cancel" });
+      cancel.addEventListener("click", function () { render(ctx.container, ctx.opts); });
+      acts.appendChild(save); acts.appendChild(cancel);
+      if (t.source === "paper") {
+        var del = el("button", { type: "button", class: "danger", text: "Delete this topo" });
+        del.addEventListener("click", function () {
+          if (!confirm("Delete this paper topo?")) return;
+          fetch("/_proxy/topos/" + t.tid, { method: "DELETE", credentials: "same-origin" }).then(function () { render(ctx.container, ctx.opts); });
+        });
+        acts.appendChild(del);
+      }
+      panel.appendChild(acts);
+    }
+    // Vías de la escuela en 8a.nu (API pública, por el proxy): elegir una la añade con su nombre, grado e id.
+    function pick8a() {
+      pick = el("div", { class: "pick" }); pick.appendChild(el("div", { text: "Loading routes from 8a.nu…" }));
+      fillPanel();
+      routes8a(ctx.crag).then(function (all) {
+        pick.textContent = "";
+        var filt = el("input", { type: "text", placeholder: "filter by name or sector", style: "width:100%;box-sizing:border-box;margin:4px 0" });
+        var box = el("div");
+        function show() {
+          box.textContent = "";
+          var q = norm(filt.value);
+          var used = {}; routes.forEach(function (r) { used[r.id] = true; });
+          all.filter(function (r) { return !q || norm(r.name + " " + r.sectorName).indexOf(q) >= 0; }).slice(0, 80).forEach(function (r) {
+            var d = el("div"); d.appendChild(el("b", { text: r.grade })); d.appendChild(document.createTextNode(r.name + (used[r.id] ? " ✓" : "") + " · " + r.sectorName + (r.ascents ? " · " + r.ascents + " asc." : "")));
+            d.addEventListener("click", function () {
+              routes.push({ id: r.id, num: String(routes.length + 1), name: r.name, grade: r.grade, points: [], slug: r.slug, sector: r.sector, height: r.height, ascents: r.ascents });
+              cur = routes[routes.length - 1]; pick = null; draw();
+            });
+            box.appendChild(d);
+          });
+        }
+        filt.addEventListener("input", show);
+        var close = el("button", { type: "button", text: "close" }); close.addEventListener("click", function () { pick = null; fillPanel(); });
+        pick.appendChild(filt); pick.appendChild(box); pick.appendChild(close);
+        var sec = (t.sector || "").toLowerCase();
+        if (sec) { var hit = all.filter(function (r) { return r.sector === sec; }); if (hit.length) { filt.value = ""; all = hit.concat(all.filter(function (r) { return r.sector !== sec; })); } }
+        show();
+      }).catch(function (e) { pick.textContent = "Couldn't load 8a.nu routes (" + e + ")"; });
+    }
+    draw();
+  }
+  function norm(s) { return String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase(); }
+  var cache8a = {};
+  function routes8a(crag) {
+    var key = crag.cat + "/" + crag.country + "/" + crag.slug;
+    if (cache8a[key]) return cache8a[key];
+    function page(i, acc) {
+      return fetch("/api/unification/outdoor/v1/web/zlaggables/" + crag.cat + "/" + crag.country + "?cragSlug=" + encodeURIComponent(crag.slug) + "&pageIndex=" + i + "&pageSize=150&sortField=totalascents&order=desc", { credentials: "same-origin" })
+        .then(function (r) { return r.json(); }).then(function (d) {
+          (d.items || []).forEach(function (v) {
+            acc.push({ id: String(v.zlaggableId || v.unifiedId), name: v.zlaggableName || "", grade: v.difficulty || "", slug: v.zlaggableSlug || "", sector: v.sectorSlug || "", sectorName: v.sectorName || "", height: v.height, ascents: v.totalAscents });
+          });
+          return (d.pagination && d.pagination.hasNext && i < 20) ? page(i + 1, acc) : acc;
+        });
+    }
+    cache8a[key] = page(0, []);
+    return cache8a[key];
+  }
+  // Guardar la escuela para sin red (solo en la página suelta): service worker de ámbito /_proxy/topos/ y caché con la
+  // página, el JS, el JSON y las fotos. /_proxy/topos/ lista lo guardado.
+  function offlineButton(where, d, opts) {
+    if (!("serviceWorker" in navigator) || !("caches" in window)) return;
+    var pageUrl = location.pathname + location.search;
+    var btn = el("button", { type: "button", text: "⬇ Save offline" });
+    var st = el("span", { class: "hint", style: "font-size:12px;color:#555" });
+    where.appendChild(btn); where.appendChild(st);
+    where.appendChild(el("a", { href: "/_proxy/topos/", text: "saved crags", style: "font-size:12px;margin-left:6px" }));
+    caches.open("nut-v1").then(function (c) { return c.match(pageUrl); }).then(function (r) { if (r) { st.textContent = "saved ✓"; btn.textContent = "⬇ Update offline copy"; } });
+    btn.addEventListener("click", function () {
+      btn.disabled = true; st.textContent = "saving…";
+      navigator.serviceWorker.register("/_proxy/topos/sw.js", { scope: "/_proxy/topos/" }).then(function () { return caches.open("nut-v1"); }).then(function (c) {
+        var urls = [pageUrl, "/_proxy/topos/", "/_proxy/topos/static/topos.js?v=" + (opts.version || ""), "/_proxy/topos/" + opts.key + (opts.sector ? "?sector=" + encodeURIComponent(opts.sector) : "")];
+        (d.topos || []).forEach(function (t) { urls.push(t.blank || t.image); });
+        (d.access || []).forEach(function (a) { urls.push(a.image); });
+        var n = 0;
+        return urls.reduce(function (p, u) { return p.then(function () { return c.add(u).then(function () { n++; st.textContent = "saving… " + n + "/" + urls.length; }).catch(function () {}); }); }, Promise.resolve()).then(function () { return n; });
+      }).then(function (n) { st.textContent = "saved ✓ (" + n + " files)"; btn.textContent = "⬇ Update offline copy"; btn.disabled = false; })
+        .catch(function (e) { st.textContent = "couldn't save: " + (e.message || e); btn.disabled = false; });
+    });
+  }
+  // Subir una foto (croquis de papel, pantallazo…) como croquis de la escuela; luego se trazan las vías en el editor.
+  function uploadForm(container, d, opts) {
+    var tools = el("div", { class: "nut-tools" });
+    var btn = el("button", { type: "button", text: "+ Paper topo (photo)" });
+    tools.appendChild(btn);
+    container.appendChild(tools);
+    btn.addEventListener("click", function () {
+      if (container.querySelector(".nut-form")) return;
+      var form = el("div", { class: "nut-form" });
+      var file = el("input", { type: "file", accept: "image/jpeg,image/png" });
+      var heading = el("input", { type: "text", placeholder: "title (e.g. guidebook page, sector)" });
+      var sector = el("select");
+      sector.appendChild(el("option", { value: "", text: "— sector —" }));
+      (d.sectors || []).forEach(function (s) { var o = el("option", { value: s.slug || "", text: s.name || s.slug || "" }); if (opts.sector && s.slug === opts.sector) o.selected = true; sector.appendChild(o); });
+      var baked = el("input", { type: "checkbox", checked: "checked" });
+      var go = el("button", { type: "button", class: "primary", text: "Upload" });
+      var cancel = el("button", { type: "button", text: "Cancel" });
+      var msg = el("span", { class: "hint" });
+      form.appendChild(el("label", { text: "Photo: " }, [file]));
+      form.appendChild(el("label", { text: "Title: " }, [heading]));
+      form.appendChild(el("label", { text: "Sector: " }, [sector]));
+      form.appendChild(el("label", { text: " the lines are already drawn on the photo (tracing is only for tapping)" }));
+      form.lastChild.insertBefore(baked, form.lastChild.firstChild);
+      form.appendChild(el("div", { class: "row" }, [go, cancel, msg]));
+      tools.after(form);
+      cancel.addEventListener("click", function () { form.remove(); });
+      go.addEventListener("click", function () {
+        var f = file.files && file.files[0];
+        if (!f) { msg.textContent = "Pick a photo first."; return; }
+        go.disabled = true; msg.textContent = "Uploading…";
+        var sName = sector.selectedOptions[0] ? sector.selectedOptions[0].textContent : "";
+        var q = new URLSearchParams({ heading: heading.value || f.name, sector: sector.value, sector_name: sector.value ? sName : "", baked: baked.checked ? "1" : "0", crag_name: (d.crag && d.crag.name) || "" });
+        fetch("/_proxy/topos/" + opts.key + "/upload?" + q.toString(), { method: "PUT", body: f, credentials: "same-origin" })
+          .then(function (r) { return r.json(); }).then(function (r) {
+            if (r.error) throw new Error(r.error);
+            render(container, Object.assign({}, opts, { edit: r.hash }));
+          }).catch(function (e) { go.disabled = false; msg.textContent = "Failed: " + (e.message || e); });
+      });
+    });
   }
 
   // Pellizco para ampliar y arrastre para mover, solo a pantalla completa.
@@ -348,9 +572,20 @@
       });
       container.appendChild(bar);
       redraws = [];
+      var ctx = { container: container, opts: opts, crag: d.crag || null };
+      if (!d.sectors || !d.sectors.length) d.sectors = opts.sectors || [];
+      if (d.crag) uploadForm(container, d, opts);
+      if (opts.standalone) offlineButton(container.querySelector(".nut-tools") || container, d, opts);
+      else if (d.crag) (container.querySelector(".nut-tools") || container).appendChild(el("a", { href: "/_proxy/topos/" + opts.key + "/page" + (opts.sector ? "?sector=" + encodeURIComponent(opts.sector) : ""), target: "_blank", text: "Open alone (save offline) ↗", style: "margin-left:auto;font-size:13px" }));
       var host = el("div", { class: "nut-topos" });
       container.appendChild(host);
-      (d.topos || []).forEach(function (t) { host.appendChild(drawTopo(t)); counts[t.source] = (counts[t.source] || 0) + 1; });
+      (d.topos || []).forEach(function (t) { host.appendChild(drawTopo(t, ctx)); counts[t.source] = (counts[t.source] || 0) + 1; });
+      if (opts.edit) {
+        var tt = (d.topos || []).filter(function (t) { return t.tid === opts.edit; })[0];
+        var cc = host.querySelector('.nut-topo[data-hash="' + opts.edit + '"]');
+        opts.edit = null;
+        if (tt && cc) { cc.scrollIntoView({ block: "start" }); cc.querySelector("button[title='Edit routes']").click(); }
+      }
       var tc = opts.thecrag || (d.crag && { country: d.crag.country, area: d.crag.area, crag: d.crag.name, cragSlug: d.crag.slug });
       var tcHost = el("div");
       container.appendChild(tcHost);
@@ -394,7 +629,7 @@
       link.appendChild(el("a", { href: THECRAG + d.crag.path, target: "_blank", text: (d.crag.name || "Crag") + " on theCrag ↗" }));
       link.appendChild(document.createTextNode(d.partial ? " · theCrag cut us off: partial" : ""));
       host.appendChild(link);
-      d.topos.forEach(function (t) { t.source = "thecrag"; host.appendChild(drawTopo(t)); });
+      d.topos.forEach(function (t) { t.source = "thecrag"; host.appendChild(drawTopo(t, {})); });
       counts.thecrag = d.topos.length;
       sourceBar(container, counts);
     }).catch(function (e) {

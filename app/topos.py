@@ -95,6 +95,22 @@ def jpeg_size(path: Path) -> tuple[int, int] | None:
         return None
 
 
+def png_size(path: Path) -> tuple[int, int] | None:
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+    except OSError:
+        return None
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    w, h = struct.unpack(">II", head[16:24])
+    return w, h
+
+
+def image_size(path: Path) -> tuple[int, int] | None:
+    return jpeg_size(path) or png_size(path)
+
+
 def crag_key(cat: str, country: str, crag: str) -> str:
     return f"{country}/{crag}"
 
@@ -196,6 +212,9 @@ def image_url(h: str) -> str:
     return f"/_proxy/topos/img/{h}.jpg"
 
 
+_MEDIA = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+
+
 def crag_data(country: str, crag: str, sector: str = "") -> dict | None:
     """Lo que hay en la base de una escuela: ficha, fotos de acceso y croquis con sus vías, listos para el visor."""
     key = f"{country}/{crag}"
@@ -243,6 +262,7 @@ def crag_data(country: str, crag: str, sector: str = "") -> dict | None:
             "sector": t["sector"], "sector_name": t["sector_name"] or "", "width": t["width"], "height": t["height"],
             "image": image_url(t["hash"]), "baked": bool(t["baked"]) and not t["blank"],
             "blank": image_url(t["hash"]) + "?blank=1" if t["blank"] else None, "routes": rs,
+            "editable": True,
         })
     if sector and not topos:  # el sector no tiene croquis propios (o el slug no casa): todos los de la escuela
         return crag_data(country, crag)
@@ -288,9 +308,10 @@ async def crag_json(request: Request) -> Response:
     if sector and not SLUG.fullmatch(sector):
         return JSONResponse({"error": "bad sector"}, status_code=400)
     data = await asyncio.to_thread(crag_data, k[1], k[2], sector)
-    if data is None:
-        return JSONResponse({"error": "not_found", "topos": [], "access": []}, status_code=404,
-                            headers={"cache-control": "no-store"})
+    if data is None:  # sin nada en la base: lo justo para que el visor deje subir un croquis de papel
+        data = {"crag": {"key": "/".join(k), "name": request.query_params.get("name", "") or k[2], "cat": k[0],
+                         "country": k[1], "slug": k[2], "area": request.query_params.get("area", ""), "premium": {}},
+                "access": [], "topos": [], "sectors": [], "ticks": ticks.source, "ticks_at": ticks.loaded_at, "empty": True}
     return JSONResponse(data, headers={"cache-control": "no-store"})
 
 
@@ -307,7 +328,7 @@ async def image(request: Request) -> Response:
     path = Path(row["blank"] if request.query_params.get("blank") and row["blank"] else row["file"])
     if not path.exists():
         return PlainTextResponse("no", status_code=404)
-    return FileResponse(path, media_type="image/jpeg",
+    return FileResponse(path, media_type=_MEDIA.get(path.suffix.lower(), "image/jpeg"),
                         headers={"cache-control": "private, max-age=31536000, immutable", "x-robots-tag": "noindex"})
 
 
@@ -327,15 +348,168 @@ async def page(request: Request) -> Response:
         '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,'
         f'initial-scale=1"><title>Topos · {k[2]}</title>'
         '<style>body{margin:0;background:#f3f3ef;font:15px system-ui,sans-serif}#host{max-width:900px;margin:0 auto;padding:8px}</style>'
-        f'<script src="/_proxy/static/topos.js?v={v}"></script></head><body><div id="host"></div>'
-        f'<script>nuTopos.render(document.getElementById("host"), {{key: {json.dumps(key)}, sector: {json.dumps(sector)}, standalone: true}});</script>'
+        f'<script src="/_proxy/topos/static/topos.js?v={v}"></script></head><body><div id="host"></div>'
+        f'<script>nuTopos.render(document.getElementById("host"), {{key: {json.dumps(key)}, sector: {json.dumps(sector)}, standalone: true, version: {json.dumps(v)}}});</script>'
         "</body></html>",
+        headers={"x-robots-tag": "noindex"},
+    )
+
+
+# --- croquis de papel: subida y edición de trazos -------------------------------------------------------------------------
+
+MAX_UPLOAD = 25 * 1024 * 1024
+_RID = re.compile(r"[\w.-]{1,60}")
+
+
+async def upload(request: Request) -> Response:
+    """`PUT …/upload?heading=&sector=&baked=1` con la imagen (JPEG o PNG) en el cuerpo. Crea un croquis `paper` sin
+    vías; las pone después `PUT /_proxy/topos/<hash>/routes`."""
+    if (d := _denied(request)) is not None:
+        return d
+    k = _key(request)
+    if not k:
+        return JSONResponse({"error": "bad crag"}, status_code=400)
+    sector = request.query_params.get("sector", "")
+    if sector and not SLUG.fullmatch(sector):
+        return JSONResponse({"error": "bad sector"}, status_code=400)
+    body = await request.body()
+    if not body or len(body) > MAX_UPLOAD:
+        return JSONResponse({"error": "empty or too big (25 MB max)"}, status_code=413 if body else 400)
+    ext = ".png" if body[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg" if body[:2] == b"\xff\xd8" else None
+    if not ext:
+        return JSONResponse({"error": "JPEG or PNG only"}, status_code=415)
+    h = "paper-" + os.urandom(6).hex()
+    out = TOPOS_DIR / "paper"
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"{h}{ext}"
+    path.write_bytes(body)
+    wh = image_size(path)
+    if not wh:
+        path.unlink(missing_ok=True)
+        return JSONResponse({"error": "can't read the image size"}, status_code=415)
+    key = crag_key(*k)
+    heading = request.query_params.get("heading", "").strip()[:120] or "Paper topo"
+    baked = request.query_params.get("baked", "1") != "0"
+    with store.connect() as db:
+        if not db.execute("SELECT 1 FROM crag_info WHERE crag = ?", (key,)).fetchone():
+            db.execute("INSERT INTO crag_info (crag, cat, name, data, updated) VALUES (?, ?, ?, '{}', ?)",
+                       (key, k[0], request.query_params.get("crag_name", "").strip()[:120] or k[2], time.time()))
+        sname = request.query_params.get("sector_name", "").strip()[:120]
+        db.execute(
+            "INSERT INTO topo (hash, source, kind, crag, sector, sector_name, heading, file, width, height, baked, blank, "
+            "ordering, status, updated) VALUES (?, 'paper', 'topo', ?, ?, ?, ?, ?, ?, ?, ?, NULL, 10000, 'ok', ?)",
+            (h, key, sector, sname, heading, str(path), wh[0], wh[1], int(baked), time.time()))
+    return JSONResponse({"ok": True, "hash": h, "image": image_url(h), "width": wh[0], "height": wh[1]})
+
+
+async def set_routes(request: Request) -> Response:
+    """`PUT /_proxy/topos/<hash>/routes` con `[{id, num, name, grade, points: [{x, y}], slug, sector, height, ascents}]`:
+    sustituye las vías del croquis (de papel o de 8a.nu, para corregirlo)."""
+    if (d := _denied(request)) is not None:
+        return d
+    h = request.path_params["hash"]
+    try:
+        rows = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if not HASH.fullmatch(h) or not isinstance(rows, list) or len(rows) > 500:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    clean = []
+    for i, r in enumerate(rows):
+        if not isinstance(r, dict):
+            return JSONResponse({"error": f"route {i}"}, status_code=400)
+        rid = str(r.get("id") or f"p{i + 1}")
+        pts = []
+        for p in r.get("points") or []:
+            try:
+                pts.append([round(float(p["x"] if isinstance(p, dict) else p[0]), 1), round(float(p["y"] if isinstance(p, dict) else p[1]), 1)])
+            except (KeyError, TypeError, ValueError, IndexError):
+                return JSONResponse({"error": f"route {i}: points"}, status_code=400)
+        if not _RID.fullmatch(rid):
+            return JSONResponse({"error": f"route {i}: id"}, status_code=400)
+        asc = r.get("ascents")
+        clean.append((h, rid, str(r.get("num") or "")[:10], str(r.get("name") or "")[:120], str(r.get("grade") or "")[:12],
+                      json.dumps(pts), str(r.get("slug") or "")[:120], str(r.get("sector") or "")[:120],
+                      int(r["height"]) if str(r.get("height") or "").isdigit() else None, int(asc) if isinstance(asc, (int, float)) else None))
+    with store.connect() as db:
+        if not db.execute("SELECT 1 FROM topo WHERE hash = ?", (h,)).fetchone():
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        db.execute("DELETE FROM topo_route WHERE topo = ?", (h,))
+        db.executemany("INSERT OR REPLACE INTO topo_route (topo, rid, num, name, grade, points, slug, sector, height, ascents) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", clean)
+        db.execute("UPDATE topo SET updated = ? WHERE hash = ?", (time.time(), h))
+    return JSONResponse({"ok": True, "routes": len(clean)})
+
+
+async def patch_topo(request: Request) -> Response:
+    """`PATCH /_proxy/topos/<hash>` con {heading, sector, sector_name, baked, status: ok|deleted}; DELETE lo retira."""
+    if (d := _denied(request)) is not None:
+        return d
+    h = request.path_params["hash"]
+    if not HASH.fullmatch(h):
+        return JSONResponse({"error": "bad hash"}, status_code=400)
+    body = {"status": "deleted"} if request.method == "DELETE" else await request.json()
+    sets, vals = [], []
+    for col in ("heading", "sector", "sector_name", "status"):
+        if col in body:
+            v = str(body[col] or "")[:120]
+            if col == "status" and v not in ("ok", "deleted") or col == "sector" and v and not SLUG.fullmatch(v):
+                return JSONResponse({"error": col}, status_code=400)
+            sets.append(f"{col} = ?")
+            vals.append(v)
+    if "baked" in body:
+        sets.append("baked = ?")
+        vals.append(1 if body["baked"] else 0)
+    if not sets:
+        return JSONResponse({"error": "nothing to change"}, status_code=400)
+    with store.connect() as db:
+        cur = db.execute(f"UPDATE topo SET {', '.join(sets)}, updated = ? WHERE hash = ?", (*vals, time.time(), h))
+        if not cur.rowcount:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+# --- sin red: service worker con ámbito /_proxy/topos/ ------------------------------------------------------------------
+
+STATIC = Path(__file__).parent / "static"
+
+
+async def sw(_: Request) -> Response:
+    return FileResponse(STATIC / "topos-sw.js", media_type="text/javascript",
+                        headers={"cache-control": "no-cache", "service-worker-allowed": "/_proxy/topos/"})
+
+
+async def static_js(request: Request) -> Response:
+    cache = "public, max-age=31536000, immutable" if request.query_params.get("v") else "no-cache"
+    return FileResponse(STATIC / "topos.js", media_type="text/javascript", headers={"cache-control": cache})
+
+
+async def saved_index(request: Request) -> Response:
+    """Lista de escuelas guardadas para sin red (la lee el JS de las cachés del service worker)."""
+    if (d := _denied(request)) is not None:
+        return d
+    return HTMLResponse(
+        '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+        "<title>Saved topos</title><style>body{margin:0;padding:12px;background:#f3f3ef;font:16px system-ui,sans-serif}"
+        "li{margin:8px 0}a{color:#8b1d8b}</style></head><body><h2>Topos saved for offline</h2><ul id=l></ul>"
+        "<p id=m>Reading…</p><script>(async()=>{const ul=document.getElementById('l'),m=document.getElementById('m');"
+        "if(!('caches' in window)){m.textContent='No cache support';return}const c=await caches.open('nut-v1');"
+        "const ks=(await c.keys()).map(r=>new URL(r.url).pathname+new URL(r.url).search).filter(p=>/[/]page([?]|$)/.test(p));"
+        "m.textContent=ks.length?'':'Nothing saved yet: open a crag page and tap «Save offline».';"
+        "ks.sort().forEach(p=>{const li=document.createElement('li'),a=document.createElement('a');a.href=p;"
+        "a.textContent=decodeURIComponent(p.replace('/_proxy/topos/','').replace('/page','').replace('?sector=',' · '));li.appendChild(a);ul.appendChild(li)})})()</script></body></html>",
         headers={"x-robots-tag": "noindex"},
     )
 
 
 CRAG = "{cat}/{country}/{crag}"
 routes = [
+    Route("/_proxy/topos/", saved_index),
+    Route("/_proxy/topos/sw.js", sw),
+    Route("/_proxy/topos/static/topos.js", static_js),
+    Route(f"/_proxy/topos/{CRAG}/upload", upload, methods=["PUT", "POST"]),
+    Route("/_proxy/topos/{hash}/routes", set_routes, methods=["PUT"]),
+    Route("/_proxy/topos/{hash}", patch_topo, methods=["PATCH", "DELETE"]),
     Route(f"/_proxy/topos/{CRAG}", crag_json),
     Route(f"/_proxy/topos/{CRAG}/page", page),
     Route("/_proxy/topos/img/{hash}.jpg", image),

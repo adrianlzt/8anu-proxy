@@ -74,7 +74,17 @@ trazo (puntos en píxeles de la foto), vengan de donde vengan:
   (`blank=true`) y el visor pinta él las líneas (encadenadas en verde, grosor por popularidad, botón de ocultar).
   `tools/eight/after_download.sh` espera a que acabe la descarga de la carpeta alias y hace las dos cosas.
 - **theCrag**: el visor se los pide a `thecrag.adrianlzt.com/_proxy/topos` (mismo formato), como antes.
-- **Papel**: fotos subidas por Adrián (pendiente: subida y editor).
+- **Papel**: una foto (página de guía, pantallazo) subida desde el propio visor («+ Paper topo»; `PUT
+  …/upload?heading=&sector=&baked=`, JPEG o PNG en el cuerpo, en `DATA_DIR/topos/paper/`) y las vías trazadas en el
+  editor (✎ en cada croquis local, también para corregir los de 8a.nu): se elige la vía de la lista de 8a.nu de la
+  escuela (API pública de vías por el proxy: nombre, grado, id, y así encadenes y «Log it») o una suelta, y se toca la
+  foto de abajo arriba; `PUT /_proxy/topos/<hash>/routes` las guarda, `PATCH`/`DELETE /_proxy/topos/<hash>` retoca o
+  retira. La skill «croquis-papel» de la operadora hace el grueso (cruce de números con vías) y deja el ajuste fino
+  al editor.
+- **Sin red**: en la página suelta (`…/page`, enlace «Open alone» en la tarjeta), «Save offline» registra un service
+  worker de ámbito `/_proxy/topos/` (`static/topos-sw.js`, servido en `/_proxy/topos/sw.js`) y guarda en la caché
+  `nut-v1` la página, el JS, el JSON y las fotos de esa escuela; `/_proxy/topos/` lista lo guardado. No toca el resto
+  del proxy.
 
 `GET /_proxy/topos/<cat>/<país>/<escuela>[?sector=]` devuelve ficha premium, fotos de acceso y croquis con vías;
 `/_proxy/topos/img/<hash>.jpg[?blank=1]` la foto; `…/page` una página suelta con el visor. Todo pide la contraseña

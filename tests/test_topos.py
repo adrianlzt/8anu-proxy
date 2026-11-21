@@ -124,7 +124,7 @@ def client(data_dir, monkeypatch):
 def test_api(client):
     r = client.get("/_proxy/topos/sportclimbing/spain/nargo?sector=bel-canto")
     assert r.status_code == 200 and r.json()["topos"][0]["heading"] == "Bel Canto"
-    assert client.get("/_proxy/topos/sportclimbing/spain/nope").status_code == 404
+    assert client.get("/_proxy/topos/sportclimbing/spain/nope").json()["empty"] is True
     assert client.get("/_proxy/topos/sportclimbing/spain/nargo?sector=BAD!").status_code == 400
     r = client.get(f"/_proxy/topos/img/{HASH}.jpg")
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and "immutable" in r.headers["cache-control"]
@@ -138,3 +138,45 @@ def test_password_protects_topos(client, monkeypatch):
     assert client.get("/_proxy/topos/sportclimbing/spain/nargo").status_code == 401
     assert client.get(f"/_proxy/topos/img/{HASH}.jpg").status_code == 401
     assert client.get("/_proxy/topos/sportclimbing/spain/nargo", auth=("x", "secreto")).status_code == 200
+
+
+def test_empty_crag_lets_upload(client):
+    r = client.get("/_proxy/topos/sportclimbing/spain/nope?name=Nope")
+    assert r.status_code == 200 and r.json()["empty"] and r.json()["crag"]["name"] == "Nope"
+
+
+def test_paper_upload_edit_delete(client):
+    q = "heading=Guidebook&sector=bel-canto&sector_name=Bel%20Canto&baked=1"
+    assert client.put("/_proxy/topos/sportclimbing/spain/nargo/upload?" + q, content=b"nope").status_code == 415
+    r = client.put("/_proxy/topos/sportclimbing/spain/nargo/upload?" + q, content=tiny_jpeg(900, 600))
+    assert r.status_code == 200, r.text
+    h = r.json()["hash"]
+    assert h.startswith("paper-") and r.json()["width"] == 900
+    d = client.get("/_proxy/topos/sportclimbing/spain/nargo?sector=bel-canto").json()
+    t = [x for x in d["topos"] if x["tid"] == h][0]
+    assert t["source"] == "paper" and t["heading"] == "Guidebook" and t["editable"] and t["routes"] == []
+    assert client.get(f"/_proxy/topos/img/{h}.jpg").status_code == 200
+    # Vías: una de 8a.nu (con id) y una suelta.
+    body = [{"id": "77", "num": "1", "name": "Espàrrecs i Coliflors", "grade": "7a+", "points": [{"x": 10, "y": 500}, {"x": 12.26, "y": 100}], "slug": "esparrecs", "sector": "bel-canto", "ascents": 269},
+            {"num": "2", "name": "Sin nombre", "grade": "6a", "points": [[100, 500], [110, 90]]}]
+    r = client.put(f"/_proxy/topos/{h}/routes", json=body)
+    assert r.status_code == 200 and r.json()["routes"] == 2
+    rs = [x for x in client.get("/_proxy/topos/sportclimbing/spain/nargo").json()["topos"] if x["tid"] == h][0]["routes"]
+    assert [x["num"] for x in rs] == ["1", "2"] and rs[0]["points"][1] == {"x": 12.3, "y": 100.0, "t": ""}
+    assert rs[0]["url8a"].endswith("/sectors/bel-canto/routes/esparrecs") and rs[1]["id"] == "p2"
+    assert client.put(f"/_proxy/topos/{h}/routes", json=[{"points": [["x", 1]]}]).status_code == 400
+    assert client.put("/_proxy/topos/paper-000000000000/routes", json=[]).status_code == 404
+    # Retocar y borrar (soft).
+    assert client.patch(f"/_proxy/topos/{h}", json={"heading": "Page 12", "baked": False}).status_code == 200
+    t = [x for x in client.get("/_proxy/topos/sportclimbing/spain/nargo").json()["topos"] if x["tid"] == h][0]
+    assert t["heading"] == "Page 12" and t["baked"] is False
+    assert client.delete(f"/_proxy/topos/{h}").status_code == 200
+    assert not [x for x in client.get("/_proxy/topos/sportclimbing/spain/nargo").json()["topos"] if x["tid"] == h]
+
+
+def test_offline_bits(client):
+    r = client.get("/_proxy/topos/sw.js")
+    assert r.status_code == 200 and r.headers["service-worker-allowed"] == "/_proxy/topos/" and "nut-v1" in r.text
+    assert client.get("/_proxy/topos/static/topos.js?v=1").status_code == 200
+    assert "Saved topos" in client.get("/_proxy/topos/").text
+    assert "/_proxy/topos/static/topos.js" in client.get("/_proxy/topos/sportclimbing/spain/nargo/page").text

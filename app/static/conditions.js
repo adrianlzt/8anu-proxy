@@ -581,7 +581,7 @@
       // En la página de un sector (/routes?sector=… o /sectors/…), solo sus croquis (si no tiene, los de la escuela).
       const slug = new URLSearchParams(location.search).get("sector") || (location.pathname.match(/\/sectors\/([a-z0-9-]+)/) || [])[1];
       const sector = slug && (topos.info.sectors.find((z) => z.slug === slug) || {}).name;
-      window.nuTopos.render(host, { key, sector: slug || "", thecrag: { country: topos.info.country, area: topos.info.area, crag: topos.info.crag, cragSlug: key.split("/")[2], ...(sector ? { sector } : {}) } });
+      window.nuTopos.render(host, { key, sector: slug || "", sectors: topos.info.sectors, thecrag: { country: topos.info.country, area: topos.info.area, crag: topos.info.crag, cragSlug: key.split("/")[2], ...(sector ? { sector } : {}) } });
       topos.rendered = key;
     } catch (e) {
       body.innerHTML = `<p class="nuc-muted">Couldn't load the topos: ${esc(String(e.message || e))}</p>`;
