@@ -550,24 +550,25 @@
     const trigger = hdr.querySelector(".crag-mobile-header__trigger");
     (trigger && trigger.parentElement === hdr ? trigger : hdr.lastElementChild || hdr).after(a);
   }
-  // Croquis de theCrag (visor de thecrag.adrianlzt.com, con las vías encadenadas según 8a.nu en verde): tarjeta plegada
-  // debajo de la cabecera de la escuela (y de nuestro bloque de condiciones). Se carga solo al abrirla.
-  const TOPOS_JS = "https://thecrag.adrianlzt.com/_proxy/topos.js";
+  // Croquis (visor propio, static/topos.js; ver app/topos.py): los premium de 8a.nu importados, los de papel y los de
+  // theCrag, en una tarjeta plegada debajo de la cabecera de la escuela (y de nuestro bloque de condiciones). Se carga
+  // solo al abrirla.
   const TOPOS_OPEN = "nuc-topos-open";
+  const TOPOS_HINT = "▾ 8a.nu premium · theCrag · your sends in green";
   const topos = { key: null, info: null, rendered: null };
   function loadToposJs() {
-    if (window.tcTopos) return Promise.resolve();
+    if (window.nuTopos) return Promise.resolve();
     if (!topos.js) topos.js = new Promise((ok, ko) => {
-      const sc = document.createElement("script"); sc.src = TOPOS_JS; sc.onload = ok; sc.onerror = ko; document.head.appendChild(sc);
+      const sc = document.createElement("script"); sc.src = `/_proxy/static/topos.js?v=${MY_VERSION || Date.now()}`; sc.onload = ok; sc.onerror = ko; document.head.appendChild(sc);
     });
     return topos.js;
   }
   async function renderTopos(card, key) {
     const body = card.querySelector(".nuc-topos-body");
-    body.innerHTML = '<p class="nuc-muted">Looking for this crag on theCrag… (the first time can take up to a minute)</p>';
+    body.innerHTML = '<p class="nuc-muted">Loading topos…</p>';
     try {
       if (!topos.info || topos.info.key !== key) {
-        // Nombre, zona y sectores tal como los da 8a.nu (no hacen falta coordenadas).
+        // Nombre, zona y sectores tal como los da 8a.nu (para buscar la escuela en theCrag; no hacen falta coordenadas).
         const d = await (await fetch(`/_proxy/conditions/${key}/info`)).json();
         if (!d.name) throw new Error(d.error || "no crag data");
         topos.info = { key, country: d.country || key.split("/")[1], area: d.area, crag: d.name, sectors: d.sectors };
@@ -577,10 +578,10 @@
       body.innerHTML = "";
       const host = document.createElement("div");
       body.appendChild(host);
-      // En la página de un sector (/routes?sector=… o /sectors/…), solo sus croquis (thecrag-proxy cae a la escuela si no casa).
+      // En la página de un sector (/routes?sector=… o /sectors/…), solo sus croquis (si no tiene, los de la escuela).
       const slug = new URLSearchParams(location.search).get("sector") || (location.pathname.match(/\/sectors\/([a-z0-9-]+)/) || [])[1];
       const sector = slug && (topos.info.sectors.find((z) => z.slug === slug) || {}).name;
-      window.tcTopos.render(host, { country: topos.info.country, area: topos.info.area, crag: topos.info.crag, ...(sector ? { sector } : {}) });
+      window.nuTopos.render(host, { key, sector: slug || "", thecrag: { country: topos.info.country, area: topos.info.area, crag: topos.info.crag, cragSlug: key.split("/")[2], ...(sector ? { sector } : {}) } });
       topos.rendered = key;
     } catch (e) {
       body.innerHTML = `<p class="nuc-muted">Couldn't load the topos: ${esc(String(e.message || e))}</p>`;
@@ -603,12 +604,12 @@
     card.className = "nuc nuc-topos";
     card.dataset.key = ckey;
     const open = localStorage.getItem(TOPOS_OPEN) === "1";
-    card.innerHTML = `<div class="nuc-card"><button type="button" class="nuc-pad nuc-row mg-toggle" data-topos="1"><h2>Topos (theCrag)</h2><span>${open ? "▴" : "▾ photos with lines, your sends in green"}</span></button><div class="nuc-topos-body nuc-pad" ${open ? "" : "hidden"}></div></div>`;
+    card.innerHTML = `<div class="nuc-card"><button type="button" class="nuc-pad nuc-row mg-toggle" data-topos="1"><h2>Topos</h2><span>${open ? "▴" : TOPOS_HINT}</span></button><div class="nuc-topos-body nuc-pad" ${open ? "" : "hidden"}></div></div>`;
     after.after(card);
     card.querySelector("[data-topos]").addEventListener("click", () => {
       const now = localStorage.getItem(TOPOS_OPEN) !== "1";
       localStorage.setItem(TOPOS_OPEN, now ? "1" : "0");
-      card.querySelector(".mg-toggle span").textContent = now ? "▴" : "▾ photos with lines, your sends in green";
+      card.querySelector(".mg-toggle span").textContent = now ? "▴" : TOPOS_HINT;
       const b = card.querySelector(".nuc-topos-body");
       b.hidden = !now;
       if (now && !b.childElementCount) renderTopos(card, key);

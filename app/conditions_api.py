@@ -24,7 +24,7 @@ from . import store
 
 STATIC = Path(__file__).parent / "static"
 SLUG = re.compile(r"[a-z0-9-]{1,120}")
-STATIC_FILES = ("conditions.js", "conditions.css", "meteo.js", "map.js", "map.css", "map.html")
+STATIC_FILES = ("conditions.js", "conditions.css", "meteo.js", "map.js", "map.css", "map.html", "topos.js")
 
 
 def version() -> str:

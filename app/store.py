@@ -16,6 +16,22 @@ CREATE TABLE IF NOT EXISTS aspect (
 CREATE TABLE IF NOT EXISTS webcam (
     id INTEGER PRIMARY KEY AUTOINCREMENT, crag TEXT NOT NULL, url TEXT NOT NULL, title TEXT, added REAL NOT NULL
 );
+-- Croquis (ver app/topos.py). crag = <país>/<escuela> (slugs de 8a.nu, sin categoría: la misma escuela vale para
+-- deportiva y bloque). source: 8a (premium, importado), paper (foto subida), …; kind: topo o access (foto de acceso).
+CREATE TABLE IF NOT EXISTS crag_info (
+    crag TEXT PRIMARY KEY, cat TEXT NOT NULL, name TEXT NOT NULL, data TEXT NOT NULL, updated REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS topo (
+    hash TEXT PRIMARY KEY, source TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'topo', crag TEXT NOT NULL,
+    sector TEXT NOT NULL DEFAULT '', sector_name TEXT, heading TEXT, file TEXT NOT NULL, width INTEGER, height INTEGER,
+    baked INTEGER NOT NULL DEFAULT 1, blank TEXT, ordering INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'ok',
+    updated REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS topo_crag ON topo (crag);
+CREATE TABLE IF NOT EXISTS topo_route (
+    topo TEXT NOT NULL, rid TEXT NOT NULL, num TEXT, name TEXT, grade TEXT, points TEXT, slug TEXT, sector TEXT,
+    height INTEGER, ascents INTEGER, PRIMARY KEY (topo, rid)
+);
 """
 
 

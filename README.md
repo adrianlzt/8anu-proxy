@@ -58,6 +58,34 @@ suelta en `/_proxy/conditions/<cat>/<país>/<escuela>`.
   preguntar; en la página de una escuela se resuelve al abrirla.
 - **Datos del usuario**: orientaciones y webcams en SQLite (`~/.local/share/8anu-proxy/data.db`, `DATA_DIR`).
 
+## Croquis
+
+Tarjeta plegada «Topos» bajo la cabecera de cada escuela (y de sus sectores: solo los de ese sector), con el visor
+propio `static/topos.js` (ver `app/topos.py`). **Modelo único**: un croquis es una foto más una lista de vías con su
+trazo (puntos en píxeles de la foto), vengan de donde vengan:
+
+- **8a.nu premium**, importados con `tools/eight/import_topos.py ~/tmp/8a-alias` de lo bajado con la cuenta alias
+  (ver el `ESTADO.md` de esa carpeta): la ficha de cada escuela (`datos/escuelas.jsonl`: acceso, aproximación, parking,
+  coordenadas, sectores), los croquis (`crops/`, que 8a.nu sirve con las líneas, números y grados ya pintados:
+  `baked`), las fotos de acceso (`accesos/`) y, cuando exista `datos/vias.jsonl`, el trazo de cada vía (la API de vías
+  de 8a.nu da `path` en píxeles de `reference_width`, el hash del croquis y el número; `--only-routes` para
+  importarlo después). Las imágenes se enlazan en duro en `DATA_DIR/topos/<hash>.jpg`; tablas `crag_info`, `topo` y
+  `topo_route` en `data.db`. Con `tools/eight/fetch_blank.py --cookie ck.txt` se baja además la versión **sin líneas**
+  (`blank=true`) y el visor pinta él las líneas (encadenadas en verde, grosor por popularidad, botón de ocultar).
+  `tools/eight/after_download.sh` espera a que acabe la descarga de la carpeta alias y hace las dos cosas.
+- **theCrag**: el visor se los pide a `thecrag.adrianlzt.com/_proxy/topos` (mismo formato), como antes.
+- **Papel**: fotos subidas por Adrián (pendiente: subida y editor).
+
+`GET /_proxy/topos/<cat>/<país>/<escuela>[?sector=]` devuelve ficha premium, fotos de acceso y croquis con vías;
+`/_proxy/topos/img/<hash>.jpg[?blank=1]` la foto; `…/page` una página suelta con el visor. Todo pide la contraseña
+del proxy (`PROXY_PASSWORD`): es contenido de pago. **Encadenes**: las ascensiones de Adrián salen del Postgres de
+8anu-dashboard por la API de su Grafana (`TICKS_GRAFANA`, `TICKS_USER`; caché `DATA_DIR/ascents.json`, refresco cada
+6 h) y se cruzan con las vías de 8a.nu por nombre de escuela y de vía (`sent`), o solo por nombre y grado cercano
+(`maybe`). En el visor: filtros All / Popular / Sent / Popular to do y por fuente; en las fotos con líneas pintadas,
+tocar una vía la resalta (trazo invisible encima) y las encadenadas llevan un punto verde al final; «Log it on 8a.nu»
+abre su página de vía. El bloque «Access & approach» enseña la aproximación premium, parking y escuela en Google Maps
+y las fotos de acceso.
+
 ## Cómo funciona
 
 - **8a.nu** es una app Nuxt (SSR + SPA). El HTML, la API (`/api/dotnet/…`, `/api/unification/…`) y el JS/CSS
