@@ -1,4 +1,5 @@
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -197,6 +198,7 @@ TC_REPLY = {"crag": {"path": "/en/climbing/spain/x", "name": "X"}, "partial": Fa
 
 def test_thecrag_cached(client, monkeypatch):
     monkeypatch.setattr(topos.httpx, "AsyncClient", FakeTC)
+    monkeypatch.setattr(topos, "THECRAG_MIN_FREE", 0)  # el tmp de los tests puede tener poco sitio
     FakeTC.calls, FakeTC.reply = [], TC_REPLY
     assert client.get("/_proxy/topos/thecrag").status_code == 400
     q = "/_proxy/topos/thecrag?country=Spain&area=Lleida&crag=X"
@@ -223,3 +225,30 @@ def test_thecrag_cached(client, monkeypatch):
     assert client.get("/_proxy/topos/thecrag?crag=Nope").json()["error"] == "not_found"
     monkeypatch.setattr(main, "PASSWORD", "secreto")
     assert client.get(q).status_code == 401 and client.get(t["image"]).status_code == 401
+
+
+def test_thecrag_prune(tmp_path, monkeypatch):
+    d = tmp_path / "thecrag"
+    d.mkdir()
+    for i in range(10):
+        f = d / f"{i:040d}.jpg"
+        f.write_bytes(b"x" * 1000)
+        os.utime(f, (1000 + i, 1000 + i))  # la 0 es la usada hace más tiempo
+    monkeypatch.setattr(topos, "THECRAG_IMG_MAX", 5000)
+    monkeypatch.setattr(topos, "THECRAG_MIN_FREE", 0)
+    assert topos.tc_prune(d) == 6  # hasta el 80 % del tope: quedan 4
+    assert sorted(f.name[:40] for f in d.iterdir()) == [f"{i:040d}" for i in range(6, 10)]
+    # Disco casi lleno: se vacía aunque no pase del tope.
+    monkeypatch.setattr(topos, "THECRAG_IMG_MAX", 10 ** 9)
+    monkeypatch.setattr(topos, "THECRAG_MIN_FREE", 10 ** 18)
+    assert topos.tc_prune(d) == 4 and not list(d.iterdir())
+
+
+def test_thecrag_image_disk_low(client, monkeypatch):
+    monkeypatch.setattr(topos.httpx, "AsyncClient", FakeTC)
+    FakeTC.calls, FakeTC.reply = [], TC_REPLY
+    img = client.get("/_proxy/topos/thecrag?crag=Low").json()["topos"][0]["image"]
+    monkeypatch.setattr(topos, "THECRAG_MIN_FREE", 10 ** 18)
+    r = client.get(img)
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+    assert not list((topos.TOPOS_DIR / "thecrag").glob("*.jpg"))  # servida sin guardar

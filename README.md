@@ -74,9 +74,12 @@ trazo (puntos en píxeles de la foto), vengan de donde vengan:
   (`blank=true`) y el visor pinta él las líneas (encadenadas en verde, grosor por popularidad, botón de ocultar).
   `tools/eight/after_download.sh` espera a que acabe la descarga de la carpeta alias y hace las dos cosas.
 - **theCrag**: el visor los pide a `/_proxy/topos/thecrag`, que se los pide una vez al proxy de theCrag
-  (`THECRAG_PROXY`, por defecto `http://127.0.0.1:8471`) y los guarda en la base `THECRAG_TTL_DAYS` días (30); las
+  (`THECRAG_PROXY`, por defecto `http://127.0.0.1:8471`) y los guarda en la base `THECRAG_TTL_DAYS` días (180); las
   fotos se sirven desde `/_proxy/topos/img/tc/<sha1>.jpg` (bajadas de image.thecrag.com la primera vez, en
-  `topos/thecrag/`). Si theCrag corta, lo guardado aunque sea viejo; «refresh» en el visor los vuelve a pedir.
+  `topos/thecrag/`). Si theCrag corta, lo guardado aunque sea viejo; «refresh» en el visor los vuelve a pedir. Tope de
+  disco: si las fotos pasan de `THECRAG_IMG_MAX_MB` (2000) o al disco le quedan menos de `THECRAG_MIN_FREE_GB` (20 GB),
+  se borran las usadas hace más tiempo (y con el disco bajo mínimos las nuevas no se guardan); si hace falta otra vez
+  una borrada, se vuelve a bajar.
 - **Papel**: una foto (página de guía, pantallazo) subida desde el propio visor («+ Paper topo»; `PUT
   …/upload?heading=&sector=&baked=`, JPEG o PNG en el cuerpo, en `DATA_DIR/topos/paper/`) y las vías trazadas en el
   editor (✎ en cada croquis local, también para corregir los de 8a.nu): se elige la vía de la lista de 8a.nu de la

@@ -13,10 +13,12 @@ Rutas (todas con la contraseña del proxy, si la hay: son contenido de pago):
 - `GET /_proxy/topos/img/<hash>.jpg` → la foto (inmutable).
 - `GET /_proxy/topos/<cat>/<país>/<escuela>/page` → página suelta con el visor (para probar y para guardar sin red).
 - `GET /_proxy/topos/thecrag?country=&area=&crag=[&sector=&crag_slug=&tc=&refresh=1]` → los croquis de theCrag de esa
-  escuela: se piden una vez al proxy de theCrag (`THECRAG_PROXY`) y se guardan `THECRAG_TTL_DAYS` días; si theCrag corta
+  escuela: se piden una vez al proxy de theCrag (`THECRAG_PROXY`) y se guardan `THECRAG_TTL_DAYS` días (180); si theCrag corta
   o el proxy no contesta, se sirve lo guardado aunque sea viejo (`stale`). `refresh=1` (o `tc=`, que fija la página a
   mano) vuelve a pedirlos. Las fotos se reescriben a `/_proxy/topos/img/tc/<sha1>.jpg`, que se bajan de
-  image.thecrag.com la primera vez y se quedan en disco.
+  image.thecrag.com la primera vez y se quedan en disco. Para no llenarlo: si las fotos pasan de `THECRAG_IMG_MAX_MB`
+  (2000) o al disco le quedan menos de `THECRAG_MIN_FREE_GB` (20), se borran las usadas hace más tiempo; con el disco
+  por debajo de ese mínimo las fotos nuevas se sirven sin guardarlas.
 
 Encadenes: los pone el visor con la sesión de 8a.nu de quien mira (`/api/dotnet/me` y la lista de ascensiones de ese
 usuario por el proxy, con su cookie), así cada uno ve los suyos; el servidor no guarda ascensiones de nadie.
@@ -29,13 +31,20 @@ import logging
 import math
 import os
 import re
+import shutil
 import struct
 import time
 from pathlib import Path
 
 import httpx
 from starlette.requests import Request
-from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
+from starlette.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+)
 from starlette.routing import Route
 
 from . import store
@@ -247,7 +256,9 @@ async def page(request: Request) -> Response:
 # --- croquis de theCrag: del proxy de theCrag, guardados aquí con sus fotos -------------------------------------------------
 
 THECRAG_PROXY = os.environ.get("THECRAG_PROXY", "http://127.0.0.1:8471").rstrip("/")
-THECRAG_TTL = float(os.environ.get("THECRAG_TTL_DAYS", "30")) * 86400
+THECRAG_TTL = float(os.environ.get("THECRAG_TTL_DAYS", "180")) * 86400
+THECRAG_IMG_MAX = float(os.environ.get("THECRAG_IMG_MAX_MB", "2000")) * 1024 * 1024
+THECRAG_MIN_FREE = float(os.environ.get("THECRAG_MIN_FREE_GB", "20")) * 1024 ** 3
 TC_PARAMS = ("country", "area", "crag", "sector", "crag_slug")
 TC_IMG_URL = re.compile(r"https://image\.thecrag\.com/[^\s\"'<>]{1,500}")
 TC_ID = re.compile(r"[0-9a-f]{40}")
@@ -312,6 +323,43 @@ async def thecrag(request: Request) -> Response:
     return JSONResponse(dict(d, cached=now), headers=headers)
 
 
+def _disk_low(d: Path) -> bool:
+    try:
+        return shutil.disk_usage(d if d.exists() else TOPOS_DIR).free < THECRAG_MIN_FREE
+    except OSError:
+        return False
+
+
+def tc_prune(d: Path | None = None) -> int:
+    """Borra las fotos de theCrag usadas hace más tiempo (mtime: se toca al servirlas) hasta quedar por debajo del 80 %
+    de THECRAG_IMG_MAX y, si al disco le falta espacio, hasta recuperar el mínimo o vaciarla. Devuelve cuántas borra."""
+    d = d or TOPOS_DIR / "thecrag"
+    if not d.exists():
+        return 0
+    files = []
+    for f in d.glob("*.jpg"):
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        files.append((st.st_mtime, st.st_size, f))
+    files.sort()
+    total = sum(x[1] for x in files)
+    n = 0
+    for _, size, f in files:
+        if total <= THECRAG_IMG_MAX * 0.8 and not _disk_low(d):
+            break
+        f.unlink(missing_ok=True)
+        total -= size
+        n += 1
+    if n:
+        log.info("caché de fotos de theCrag: %d borradas, quedan %.0f MB", n, total / 1024 / 1024)
+    return n
+
+
+_tc_last_prune = 0.0
+
+
 def _sniff(b: bytes) -> str:
     if b[:8] == b"\x89PNG\r\n\x1a\n":
         return "image/png"
@@ -343,9 +391,20 @@ async def thecrag_image(request: Request) -> Response:
                 if r.status_code != 200 or not r.headers.get("content-type", "").startswith("image/") or len(r.content) < 500:
                     return PlainTextResponse("upstream", status_code=502)
                 path.parent.mkdir(parents=True, exist_ok=True)
+                if _disk_low(path.parent):  # sin sitio: se sirve sin guardar y se hace hueco
+                    await asyncio.to_thread(tc_prune, path.parent)
+                    return Response(r.content, media_type=_sniff(r.content[:12]), headers={"cache-control": "private, max-age=86400", "x-robots-tag": "noindex"})
                 tmp = path.with_suffix(".tmp")
                 tmp.write_bytes(r.content)
                 tmp.replace(path)
+                global _tc_last_prune
+                if time.time() - _tc_last_prune > 60:
+                    _tc_last_prune = time.time()
+                    await asyncio.to_thread(tc_prune, path.parent)
+    elif time.time() - path.stat().st_mtime > 86400:
+        os.utime(path)  # usada: la última en borrarse
+    if not path.exists():
+        return PlainTextResponse("no", status_code=404)
     with open(path, "rb") as f:
         mt = _sniff(f.read(12))
     return FileResponse(path, media_type=mt, headers={"cache-control": "private, max-age=31536000, immutable", "x-robots-tag": "noindex"})
