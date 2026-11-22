@@ -182,7 +182,10 @@ async def main() -> None:
     outdir.mkdir(parents=True, exist_ok=True)
     if "--paginas" in opt:
         BUDGET["left"] = int(opt["--paginas"])
-    profile = Path.home() / ".cache" / "tc-adrian-profile" if "--cuenta" in opt else PROFILE
+    # Un perfil por cuenta: si no, login() vería la sesión de otra y seguiría con ella.
+    cuenta = opt.get("--cuenta")
+    profile = PROFILE if not cuenta else Path.home() / ".cache" / (
+        "tc-adrian-profile" if cuenta == "internet/thecrag" else "tc-profile-" + re.sub(r"[^a-z0-9]+", "-", cuenta.lower()))
     status = {"inicio": time.strftime("%Y-%m-%d %H:%M"), "hechas": [], "motivo": "terminado"}
     async with async_playwright() as p:
         b = await p.chromium.launch_persistent_context(
