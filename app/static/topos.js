@@ -473,7 +473,9 @@
       if (container.querySelector(".nut-form")) return;
       var form = el("div", { class: "nut-form" });
       // Dos botones: cámara (capture) y galería/ficheros; el input nativo queda oculto. picked: la última elegida.
-      var picked = null;
+      // En Android el permiso para leer la foto elegida puede caducar en cuanto vuelve el navegador («could not be
+      // read… permission problems»), así que se lee y se reduce nada más elegirla (ready) y lo que se sube son esos bytes.
+      var picked = null, ready = null;
       var cam = el("input", { type: "file", accept: "image/*", capture: "environment" });
       var gal = el("input", { type: "file", accept: "image/*" });
       var chosen = el("div", { class: "chosen" });
@@ -482,10 +484,19 @@
           if (!inp.files || !inp.files[0]) return;
           picked = inp.files[0];
           chosen.textContent = "";
-          var th = el("img", { alt: "" });
-          th.src = URL.createObjectURL(picked);
-          chosen.appendChild(th);
-          chosen.appendChild(el("span", { text: picked.name + " · " + (picked.size / 1048576).toFixed(1) + " MB" }));
+          var info = el("span", { text: picked.name + " · reading…" });
+          chosen.appendChild(info);
+          var mine = ready = shrinkPhoto(picked);
+          mine.then(function (blob) {
+            if (ready !== mine) return;
+            var th = el("img", { alt: "" });
+            th.src = URL.createObjectURL(blob);
+            chosen.insertBefore(th, info);
+            info.textContent = picked.name + " · " + (blob.size / 1048576).toFixed(1) + " MB to upload";
+          }, function (e) {
+            if (ready !== mine) return;
+            info.textContent = "Couldn't read this photo (" + (e.message || e) + "). Pick it again, or from Files.";
+          });
         });
       });
       var heading = el("input", { type: "text", placeholder: "title (e.g. guidebook page, sector)" });
@@ -511,12 +522,12 @@
       cancel.addEventListener("click", function () { form.remove(); });
       go.addEventListener("click", function () {
         var f = picked;
-        if (!f) { msg.textContent = "Pick a photo first."; return; }
+        if (!f || !ready) { msg.textContent = "Pick a photo first."; return; }
         go.disabled = true; msg.textContent = "Preparing the photo…";
         var sName = sector.selectedOptions[0] ? sector.selectedOptions[0].textContent : "";
         var q = new URLSearchParams({ heading: heading.value || f.name, sector: sector.value, sector_name: sector.value ? sName : "", baked: baked.checked ? "1" : "0", crag_name: (d.crag && d.crag.name) || "" });
         var step = "read";
-        shrinkPhoto(f).then(function (blob) {
+        ready.then(function (blob) {
           step = "send";
           msg.textContent = "Uploading " + (blob.size / 1048576).toFixed(1) + " MB…";
           return fetch("/_proxy/topos/" + opts.key + "/upload?" + q.toString(), { method: "PUT", body: blob, headers: { "content-type": blob.type || "image/jpeg" }, credentials: "same-origin" });
