@@ -58,7 +58,7 @@
     ".nut-ed .hint{color:#555}.nut-ed .cur{background:#eef7ff;border-radius:4px}.nut-ed .pick{max-height:200px;overflow:auto;border:1px solid #ddd;border-radius:4px}" +
     ".nut-ed .pick div{padding:4px 8px;border-bottom:1px solid #f2f2f2;cursor:pointer}.nut-ed .pick div:hover{background:#f6f6f6}.nut-ed .pick b{color:#8b1d8b;margin-right:6px}" +
     ".nut-wrap .ed .pt{fill:#fff;stroke:#1a3ab8;stroke-width:1.5}.nut-wrap .ed .cur .ln{stroke:#3af}.nut-wrap .ed .cur .pt{fill:#3af}.nut-wrap .ed .lbl text{font:bold 10px Tahoma,Arial;text-anchor:middle;fill:#000}" +
-    ".nut-topo.editing .nut-wrap{cursor:crosshair}";
+    ".nut-topo.editing .nut-wrap{cursor:crosshair}.nut-ed .hint{font-size:14px;line-height:1.4;padding:6px 8px;background:#f3eef7;border-radius:6px;margin-bottom:6px}.nut-ed .hint.warn{background:#ffe9c7;color:#8a4b00}";
   var EIGHT = location.origin;
   var COLORS = { sent: "#1fbf3f", maybe: "#e6a700", none: "#ff8c1a" };
   var FILTERS = [["all", "All"], ["pop", "Popular"], ["sent", "Sent"], ["todo", "Popular to do"]];
@@ -150,6 +150,7 @@
   function drawTopo(t, ctx) {
     ctx = ctx || {};
     var w = t.width || 650, h = t.height || 290, baked = !!t.baked;
+    var k = Math.max(0.6, w / 500);   // grosores y etiquetas en unidades de la foto: los de siempre en una de 500 px (el ancho de la tarjeta en el móvil)
     var img = el("img", { src: t.blank || t.image || t.thumb, alt: t.heading || "", loading: "lazy" });
     var svg = svgEl("svg", { viewBox: "0 0 " + w + " " + h, preserveAspectRatio: "none" });
     var info = el("div", { class: "nut-info" });
@@ -158,30 +159,30 @@
     var drawn = t.routes.filter(function (r) { return r.points && r.points.length; });
     var sorted = drawn.slice().sort(function (a, b) { return (a.sent === "sent") - (b.sent === "sent"); });   // las encadenadas, encima
     sorted.forEach(function (r) {
-      var color = COLORS[r.sent || "none"] || COLORS.none, lw = baked ? 4 : lineWidth(r);
+      var color = COLORS[r.sent || "none"] || COLORS.none, lw = (baked ? 4 : lineWidth(r)) * k;
       var pts = r.points.map(function (p) { return p.x + "," + p.y; }).join(" ");
       var g = svgEl("g", { class: "r" + (baked ? " baked" : "") + (r.sent === "sent" ? " sent" : "") });
       if (baked) g.appendChild(svgEl("polyline", { class: "hit", points: pts, style: "stroke-width:" + Math.max(14, w / 40) }));
-      g.appendChild(svgEl("polyline", { class: "halo", points: pts, style: "stroke-width:" + (lw + 2) }));
+      g.appendChild(svgEl("polyline", { class: "halo", points: pts, style: "stroke-width:" + (lw + 2 * k) }));
       var ln = svgEl("polyline", { class: "ln", points: pts, stroke: color, style: "stroke-width:" + lw });
-      if (r.sent === "maybe") ln.setAttribute("stroke-dasharray", "6 3");
+      if (r.sent === "maybe") ln.setAttribute("stroke-dasharray", 6 * k + " " + 3 * k);
       g.appendChild(ln);
       var p0 = r.points[0], pl = r.points[r.points.length - 1], pp = r.points.length > 1 ? r.points[r.points.length - 2] : null;
       if (!baked) {
         r.points.forEach(function (p) {
-          if (p.t === "belay" || p.t === "lower") g.appendChild(svgEl("circle", { cx: p.x, cy: p.y, r: 4, fill: "#fff", stroke: "#1a3ab8", "stroke-width": 2 }));
+          if (p.t === "belay" || p.t === "lower") g.appendChild(svgEl("circle", { cx: p.x, cy: p.y, r: 4 * k, fill: "#fff", stroke: "#1a3ab8", "stroke-width": 2 * k }));
         });
         if (pp && (pp.x !== pl.x || pp.y !== pl.y)) {
           var ang = Math.atan2(pl.y - pp.y, pl.x - pp.x) * 180 / Math.PI;
-          g.appendChild(svgEl("polygon", { points: "0,0 -9,-4 -9,4", fill: color, stroke: "#fff", "stroke-width": 1, transform: "translate(" + pl.x + "," + pl.y + ") rotate(" + ang + ")" }));
+          g.appendChild(svgEl("polygon", { points: "0,0 -9,-4 -9,4", fill: color, stroke: "#fff", "stroke-width": 1, transform: "translate(" + pl.x + "," + pl.y + ") rotate(" + ang + ") scale(" + k + ")" }));
         }
         if (p0 && r.num) {
-          var lw2 = 14, lh = 13, lx = Math.min(Math.max(p0.x, lw2 / 2 + 1), w - lw2 / 2 - 1), ly = Math.min(p0.y + 3, h - lh - 10);
+          var lw2 = 14 * k, lh = 13 * k, lx = Math.min(Math.max(p0.x, lw2 / 2 + 1), w - lw2 / 2 - 1), ly = Math.min(p0.y + 3 * k, h - lh - 10 * k);
           var fill = r.sent === "sent" ? "#9be89b" : r.sent === "maybe" ? "#ffe08a" : "#ffd24d";
           var lbl = svgEl("g", { class: "lbl" });
-          lbl.appendChild(svgEl("rect", { x: lx - lw2 / 2, y: ly, width: lw2, height: lh, rx: 2, fill: fill }));
-          var tx = svgEl("text", { x: lx, y: ly + 10 }); tx.textContent = r.num; lbl.appendChild(tx);
-          if (r.grade) { var gr = svgEl("text", { class: "grd", x: lx, y: ly + lh + 8 }); gr.textContent = r.grade; lbl.appendChild(gr); }
+          lbl.appendChild(svgEl("rect", { x: lx - lw2 / 2, y: ly, width: lw2, height: lh, rx: 2 * k, fill: fill }));
+          var tx = svgEl("text", { x: lx, y: ly + 10 * k, style: "font-size:" + 9 * k + "px" }); tx.textContent = r.num; lbl.appendChild(tx);
+          if (r.grade) { var gr = svgEl("text", { class: "grd", x: lx, y: ly + lh + 8 * k, style: "font-size:" + 8 * k + "px;stroke-width:" + 2 * k + "px" }); gr.textContent = r.grade; lbl.appendChild(gr); }
           g.appendChild(lbl);
         }
       } else if (r.sent && pl) {   // foto con las líneas ya pintadas: solo un punto al final de las encadenadas
@@ -236,11 +237,14 @@
       if (r.url8a) info.appendChild(el("a", { class: "nut-log", href: EIGHT + r.url8a, target: "_blank", text: "Log it on 8a.nu ↗" }));
     }
     svg.addEventListener("click", function (ev) {
-      if (t._edit) { t._edit.add(ev); return; }
+      if (t._edit) return;   // editando: lo recoge zoom (abajo)
       groups.forEach(function (x) { x.classList.remove("sel", "dim"); }); t.routes.forEach(function (x) { if (x._li) x._li.classList.remove("sel"); }); info.textContent = "";
     });
     var zoom = el("div", { class: "zoom" }, [img, svg]);
     zoom.style.aspectRatio = w + " / " + h;
+    // Editando, cada toque en la foto añade un punto. En el contenedor y no en el svg: la página de 8a.nu puede dejar
+    // los svg sin eventos y el toque llega a la img.
+    zoom.addEventListener("click", function (ev) { if (t._edit) { ev.preventDefault(); t._edit.add(ev); } });
     var wrap = el("div", { class: "nut-wrap" }, [zoom]);
     var fsBtn = el("button", { type: "button", title: "Full screen", text: "⛶" });
     var linesBtn = el("button", { type: "button", class: "nut-lines", title: "Hide lines", "aria-pressed": "false" });
@@ -280,7 +284,8 @@
     return { x: Math.round((ev.clientX - r.left) / r.width * w * 10) / 10, y: Math.round((ev.clientY - r.top) / r.height * h * 10) / 10 };
   }
   function editTopo(card, t, ctx, svg, info, list) {
-    var w = t._size[0], h = t._size[1];
+    if (t._edit) { var open = card.querySelector(".nut-ed"); if (open) open.scrollIntoView({ block: "nearest", behavior: "smooth" }); return; }
+    var w = t._size[0], h = t._size[1], k = Math.max(0.6, w / 500);
     var routes = t.routes.map(function (r) { return { id: r.id, num: r.num, name: r.name, grade: r.grade, points: (r.points || []).map(function (p) { return { x: p.x, y: p.y }; }), slug: r.slug || "", sector: r.sector || "", height: r.height, ascents: r.ascents }; });
     var cur = routes.length ? routes[routes.length - 1] : null;
     card.classList.add("editing"); card.classList.remove("nolines");
@@ -290,25 +295,34 @@
     svg.appendChild(layer);
     var panel = el("div", { class: "nut-ed" });
     card.appendChild(panel);
+    if (card.scrollIntoView) setTimeout(function () { card.scrollIntoView({ block: "start", behavior: "smooth" }); }, 50);
     t._edit = { add: function (ev) {
-      if (!cur) { hint.textContent = "Pick or add a route first."; return; }
+      if (!cur) { flash("First add a route below: «+ route from 8a.nu» or «+ other route»."); return; }
       cur.points.push(svgPoint(svg, ev, w, h)); draw(); }
     };
-    var hint = el("div", { class: "hint", text: "Tap the photo to add points to the selected route, from the bottom up. Routes added from 8a.nu get their name, grade and sends." });
+    var hint = el("div", { class: "hint" });
+    function guide() {
+      if (!cur) return "1) Add a route: «+ route from 8a.nu» (gets its name, grade and your sends) or «+ other route».";
+      var n = "#" + (cur.num || "·") + (cur.name ? " " + cur.name : "");
+      return cur.points.length < 2
+        ? "2) Now tap the photo along " + n + ": first at the start (bottom), then every bend, up to the anchor. Each tap adds a point (" + cur.points.length + " so far). ⛶ makes the photo bigger."
+        : n + ": " + cur.points.length + " points. Keep tapping to extend it, «↶ point» undoes the last one. Add another route or «Save» when done.";
+    }
+    function flash(msg) { hint.textContent = msg; hint.classList.add("warn"); setTimeout(function () { hint.classList.remove("warn"); hint.textContent = guide(); }, 2500); }
     function draw() {
       layer.textContent = "";
       routes.forEach(function (r) {
         var g = svgEl("g", { class: r === cur ? "cur" : "" });
         var pts = r.points.map(function (p) { return p.x + "," + p.y; }).join(" ");
         if (r.points.length > 1) {
-          g.appendChild(svgEl("polyline", { class: "halo", points: pts, style: "stroke-width:6" }));
-          g.appendChild(svgEl("polyline", { class: "ln", points: pts, stroke: "#ff8c1a", style: "stroke-width:3.5" }));
+          g.appendChild(svgEl("polyline", { class: "halo", points: pts, style: "stroke-width:" + 8 * k }));
+          g.appendChild(svgEl("polyline", { class: "ln", points: pts, stroke: "#ff8c1a", style: "stroke-width:" + 5 * k }));
         }
-        r.points.forEach(function (p) { g.appendChild(svgEl("circle", { class: "pt", cx: p.x, cy: p.y, r: r === cur ? 5 : 3.5 })); });
+        r.points.forEach(function (p) { g.appendChild(svgEl("circle", { class: "pt", cx: p.x, cy: p.y, r: (r === cur ? 6 : 4) * k, style: "stroke-width:" + 1.5 * k })); });
         if (r.points.length) {
-          var p0 = r.points[0], lbl = svgEl("g", { class: "lbl" });
-          lbl.appendChild(svgEl("rect", { x: p0.x - 9, y: Math.min(p0.y + 4, h - 16), width: 18, height: 14, rx: 2, fill: r === cur ? "#9fd3ff" : "#ffd24d" }));
-          var tx = svgEl("text", { x: p0.x, y: Math.min(p0.y + 4, h - 16) + 11 }); tx.textContent = r.num || "·"; lbl.appendChild(tx);
+          var p0 = r.points[0], lbl = svgEl("g", { class: "lbl" }), ly = Math.min(p0.y + 6 * k, h - 16 * k);
+          lbl.appendChild(svgEl("rect", { x: p0.x - 9 * k, y: ly, width: 18 * k, height: 14 * k, rx: 2 * k, fill: r === cur ? "#9fd3ff" : "#ffd24d" }));
+          var tx = svgEl("text", { x: p0.x, y: ly + 11 * k, style: "font-size:" + 10 * k + "px" }); tx.textContent = r.num || "·"; lbl.appendChild(tx);
           g.appendChild(lbl);
         }
         g.addEventListener("click", function (ev) { if (r !== cur) { ev.stopPropagation(); cur = r; draw(); } });
@@ -316,9 +330,10 @@
       });
       fillPanel();
     }
-    var pick = null;
+    var pick = null, bakedNow = !!t.baked;
     function fillPanel() {
       panel.textContent = "";
+      hint.textContent = guide();
       panel.appendChild(hint);
       routes.forEach(function (r) {
         var row = el("div", { class: "row" + (r === cur ? " cur" : "") });
@@ -345,11 +360,17 @@
       add.appendChild(from8a); add.appendChild(custom);
       panel.appendChild(add);
       if (pick) panel.appendChild(pick);
+      if (t.source === "paper") {
+        var bk = el("input", { type: "checkbox" }); bk.checked = bakedNow;
+        bk.addEventListener("change", function () { bakedNow = bk.checked; });
+        panel.appendChild(el("label", { class: "row" }, [bk, document.createTextNode(" The photo already shows the lines (mine stay invisible, only for tapping)")]));
+      }
       var acts = el("div", { class: "row" });
       var save = el("button", { type: "button", class: "primary", text: "Save" });
       save.addEventListener("click", function () {
         save.disabled = true;
-        fetch("/_proxy/topos/" + t.tid + "/routes", { method: "PUT", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify(routes) })
+        (bakedNow !== !!t.baked ? fetch("/_proxy/topos/" + t.tid, { method: "PATCH", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ baked: bakedNow }) }) : Promise.resolve())
+          .then(function () { return fetch("/_proxy/topos/" + t.tid + "/routes", { method: "PUT", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify(routes) }); })
           .then(function (r) { return r.json(); }).then(function (d) { if (d.error) throw new Error(d.error); render(ctx.container, ctx.opts); })
           .catch(function (e) { save.disabled = false; hint.textContent = "Couldn't save: " + (e.message || e); });
       });
@@ -505,7 +526,7 @@
       (d.sectors || []).forEach(function (s) { var o = el("option", { value: s.slug || "", text: s.name || s.slug || "" }); if (opts.sector && s.slug === opts.sector) o.selected = true; sector.appendChild(o); });
       var baked = el("input", { type: "radio", name: "nut-baked" });
       var plain = el("input", { type: "radio", name: "nut-baked" });
-      baked.checked = true;
+      plain.checked = true;   // con las líneas visibles se ve lo que se traza; si la foto ya las trae, «Yes»
       var go = el("button", { type: "button", class: "primary", text: "Upload" });
       var cancel = el("button", { type: "button", text: "Cancel" });
       var msg = el("span", { class: "hint" });
