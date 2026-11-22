@@ -58,7 +58,7 @@
     ".nut-ed .hint{color:#555}.nut-ed .cur{background:#eef7ff;border-radius:4px}.nut-ed .pick{max-height:200px;overflow:auto;border:1px solid #ddd;border-radius:4px}" +
     ".nut-ed .pick div{padding:4px 8px;border-bottom:1px solid #f2f2f2;cursor:pointer}.nut-ed .pick div:hover{background:#f6f6f6}.nut-ed .pick b{color:#8b1d8b;margin-right:6px}" +
     ".nut-wrap .ed .pt{fill:#fff;stroke:#1a3ab8;stroke-width:1.5}.nut-wrap .ed .cur .ln{stroke:#3af}.nut-wrap .ed .cur .pt{fill:#3af}.nut-wrap .ed .lbl text{font:bold 10px Tahoma,Arial;text-anchor:middle;fill:#000}" +
-    ".nut-topo.editing .nut-wrap{cursor:crosshair}.nut-ed .hint{font-size:14px;line-height:1.4;padding:6px 8px;background:#f3eef7;border-radius:6px;margin-bottom:6px}.nut-ed .hint.warn{background:#ffe9c7;color:#8a4b00}";
+    ".nut-topo.editing .nut-wrap{cursor:crosshair}.nut-ed .hint{font-size:14px;line-height:1.4;padding:6px 8px;background:#f3eef7;border-radius:6px;margin-bottom:6px}.nut-ed .hint.warn{background:#ffe9c7;color:#8a4b00}.nut-ed label.chk{display:flex !important;gap:8px;align-items:flex-start;margin:8px 0;font-size:13px;line-height:1.35}.nut-ed label.chk input{flex:none;width:18px;height:18px;margin:1px 0 0}";
   var EIGHT = location.origin;
   var COLORS = { sent: "#1fbf3f", maybe: "#e6a700", none: "#ff8c1a" };
   var FILTERS = [["all", "All"], ["pop", "Popular"], ["sent", "Sent"], ["todo", "Popular to do"]];
@@ -363,14 +363,14 @@
       if (t.source === "paper") {
         var bk = el("input", { type: "checkbox" }); bk.checked = bakedNow;
         bk.addEventListener("change", function () { bakedNow = bk.checked; });
-        panel.appendChild(el("label", { class: "row" }, [bk, document.createTextNode(" The photo already shows the lines (mine stay invisible, only for tapping)")]));
+        panel.appendChild(el("label", { class: "chk" }, [bk, el("span", { text: "The photo already shows the lines (mine stay invisible, only for tapping)" })]));
       }
       var acts = el("div", { class: "row" });
       var save = el("button", { type: "button", class: "primary", text: "Save" });
       save.addEventListener("click", function () {
         save.disabled = true;
-        (bakedNow !== !!t.baked ? fetch("/_proxy/topos/" + t.tid, { method: "PATCH", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ baked: bakedNow }) }) : Promise.resolve())
-          .then(function () { return fetch("/_proxy/topos/" + t.tid + "/routes", { method: "PUT", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify(routes) }); })
+        (bakedNow !== !!t.baked ? fetchRetry("/_proxy/topos/" + t.tid, { method: "PATCH", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ baked: bakedNow }) }) : Promise.resolve())
+          .then(function () { return fetchRetry("/_proxy/topos/" + t.tid + "/routes", { method: "PUT", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify(routes) }); })
           .then(function (r) { return r.json(); }).then(function (d) { if (d.error) throw new Error(d.error); render(ctx.container, ctx.opts); })
           .catch(function (e) { save.disabled = false; hint.textContent = "Couldn't save: " + (e.message || e); });
       });
@@ -551,7 +551,7 @@
         ready.then(function (blob) {
           step = "send";
           msg.textContent = "Uploading " + (blob.size / 1048576).toFixed(1) + " MB…";
-          return fetch("/_proxy/topos/" + opts.key + "/upload?" + q.toString(), { method: "PUT", body: blob, headers: { "content-type": blob.type || "image/jpeg" }, credentials: "same-origin" });
+          return fetchRetry("/_proxy/topos/" + opts.key + "/upload?" + q.toString(), { method: "PUT", body: blob, headers: { "content-type": blob.type || "image/jpeg" }, credentials: "same-origin" });
         }).then(function (r) {
           step = "answer";
           return r.json().catch(function () { throw new Error("server answered " + r.status); });
@@ -567,6 +567,10 @@
     });
   }
 
+  // fetch con un reintento si falla la red (en el móvil, con roaming, a veces se corta una petición suelta).
+  function fetchRetry(url, opts) {
+    return fetch(url, opts).catch(function () { return new Promise(function (res) { setTimeout(res, 1500); }).then(function () { return fetch(url, opts); }); });
+  }
   // Pellizco para ampliar y arrastre para mover, solo a pantalla completa.
   function pinch(wrap, zoom, card) {
     var s = 1, tx = 0, ty = 0, pinchD = null, pan = null, drag = null;
