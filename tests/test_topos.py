@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 from starlette.testclient import TestClient
 
@@ -63,6 +64,7 @@ def run_import(src: Path, data_dir: Path, *extra: str) -> str:
 def data_dir(tmp_path, monkeypatch, src):
     d = tmp_path / "data"
     monkeypatch.setattr(store, "DATA_DIR", d)
+    monkeypatch.setattr(topos, "TOPOS_DIR", d / "topos")  # las subidas y fotos de theCrag, no en la carpeta real
     out = run_import(src, d)
     assert "croquis 1" in out and "fotos de acceso 1" in out and "vías con trazo 2" in out and "(missing) 1" in out
     return d
@@ -163,3 +165,61 @@ def test_offline_bits(client):
     assert client.get("/_proxy/topos/static/topos.js?v=1").status_code == 200
     assert "Saved topos" in client.get("/_proxy/topos/").text
     assert "/_proxy/topos/static/topos.js" in client.get("/_proxy/topos/sportclimbing/spain/nargo/page").text
+
+
+class FakeTC:
+    """Lo mínimo de httpx.AsyncClient para el proxy de theCrag y image.thecrag.com."""
+    calls: list = []
+    reply: object = None
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, params=None, headers=None):
+        FakeTC.calls.append((url, params))
+        if url.startswith("https://image.thecrag.com/"):
+            return httpx.Response(200, content=tiny_jpeg(10, 10) + b"\0" * 600, headers={"content-type": "image/jpeg"})
+        if isinstance(FakeTC.reply, Exception):
+            raise FakeTC.reply
+        return httpx.Response(200, json=FakeTC.reply)
+
+
+TC_REPLY = {"crag": {"path": "/en/climbing/spain/x", "name": "X"}, "partial": False, "sectors": [],
+            "topos": [{"tid": "9", "heading": "Wall", "width": 100, "height": 80, "image": "https://image.thecrag.com/a/b.jpg",
+                       "thumb": "https://evil.example/t.jpg", "routes": [{"id": "1", "name": "R", "points": [{"x": 1, "y": 2}]}]}]}
+
+
+def test_thecrag_cached(client, monkeypatch):
+    monkeypatch.setattr(topos.httpx, "AsyncClient", FakeTC)
+    FakeTC.calls, FakeTC.reply = [], TC_REPLY
+    assert client.get("/_proxy/topos/thecrag").status_code == 400
+    q = "/_proxy/topos/thecrag?country=Spain&area=Lleida&crag=X"
+    d = client.get(q).json()
+    t = d["topos"][0]
+    assert t["image"].startswith("/_proxy/topos/img/tc/") and t["thumb"] is None and d["cached"]
+    assert len(FakeTC.calls) == 1 and FakeTC.calls[0][1] == {"country": "Spain", "area": "Lleida", "crag": "X"}
+    # Segunda vez (y con otras mayúsculas): de la caché, sin llamar a theCrag.
+    assert client.get("/_proxy/topos/thecrag?country=spain&area=lleida&crag=x").json()["topos"][0]["image"] == t["image"]
+    assert len(FakeTC.calls) == 1
+    # La foto: se baja una vez y luego sale del disco.
+    r = client.get(t["image"])
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and len(FakeTC.calls) == 2
+    assert client.get(t["image"]).status_code == 200 and len(FakeTC.calls) == 2
+    assert client.get("/_proxy/topos/img/tc/" + "0" * 40 + ".jpg").status_code == 404
+    # refresh=1 vuelve a pedir; si theCrag corta, lo guardado.
+    FakeTC.reply = {"error": "thecrag_blocked"}
+    d = client.get(q + "&refresh=1").json()
+    assert len(FakeTC.calls) == 3 and d["stale"] == "thecrag_blocked" and d["topos"][0]["tid"] == "9"
+    FakeTC.reply = httpx.ConnectError("down")
+    assert client.get(q + "&refresh=1").json()["stale"] == "thecrag_proxy"
+    # Lo que no está guardado: el error tal cual, sin guardar.
+    FakeTC.reply = {"error": "not_found"}
+    assert client.get("/_proxy/topos/thecrag?crag=Nope").json()["error"] == "not_found"
+    monkeypatch.setattr(main, "PASSWORD", "secreto")
+    assert client.get(q).status_code == 401 and client.get(t["image"]).status_code == 401

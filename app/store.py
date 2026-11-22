@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS topo_route (
     topo TEXT NOT NULL, rid TEXT NOT NULL, num TEXT, name TEXT, grade TEXT, points TEXT, slug TEXT, sector TEXT,
     height INTEGER, ascents INTEGER, PRIMARY KEY (topo, rid)
 );
+CREATE TABLE IF NOT EXISTS thecrag_cache (key TEXT PRIMARY KEY, at REAL NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS thecrag_img (id TEXT PRIMARY KEY, url TEXT NOT NULL);
 """
 
 

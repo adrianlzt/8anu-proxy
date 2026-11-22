@@ -1,6 +1,7 @@
 /* Visor de croquis del proxy de 8a.nu (ver app/topos.py). Una foto más sus vías con trazo, vengan de donde vengan:
  * los premium de 8a.nu importados (líneas ya pintadas en la foto, o en blanco si hay versión sin líneas), los de
- * papel subidos por Adrián y los de theCrag (pedidos a thecrag.adrianlzt.com, con el mismo formato).
+ * papel subidos por Adrián y los de theCrag (de thecrag.adrianlzt.com por /_proxy/topos/thecrag, que los guarda con sus
+ * fotos: theCrag solo se consulta la primera vez o al pulsar «refresh»).
  *
  *   nuTopos.render(el, {key: "sportclimbing/spain/x", sector: "slug", thecrag: {country, area, crag, sector, cragSlug}})
  *
@@ -428,6 +429,7 @@
         var urls = [pageUrl, "/_proxy/topos/", "/_proxy/topos/static/topos.js?v=" + (opts.version || ""), "/_proxy/topos/" + opts.key + (opts.sector ? "?sector=" + encodeURIComponent(opts.sector) : "")];
         (d.topos || []).forEach(function (t) { urls.push(t.blank || t.image); });
         (d.access || []).forEach(function (a) { urls.push(a.image); });
+        (opts.tcUrls || []).forEach(function (u) { urls.push(u); });
         var n = 0;
         return urls.reduce(function (p, u) { return p.then(function () { return c.add(u).then(function () { n++; st.textContent = "saving… " + n + "/" + urls.length; }).catch(function () {}); }); }, Promise.resolve()).then(function () { return n; });
       }).then(function (n) { st.textContent = "saved ✓ (" + n + " files)"; btn.textContent = "⬇ Update offline copy"; btn.disabled = false; })
@@ -663,7 +665,9 @@
     if (tc.sector) q.set("sector", tc.sector);
     if (tc.tc) q.set("tc", tc.tc);
     if (tc.cragSlug) q.set("crag_slug", tc.cragSlug);
-    fetch(THECRAG + "/_proxy/topos?" + q.toString()).then(function (r) { return r.json(); }).then(function (d) {
+    var jsonUrl = "/_proxy/topos/thecrag?" + q.toString();
+    if (tc.refresh) q.set("refresh", "1");
+    fetch("/_proxy/topos/thecrag?" + q.toString()).then(function (r) { return r.json(); }).then(function (d) {
       host.textContent = "";
       if (d.error) {
         if (d.error === "not_found" && (counts["8a"] || counts.paper)) return;   // ya hay croquis: no molestar
@@ -685,7 +689,21 @@
       var link = el("div", { class: "nut-legend" });
       link.appendChild(el("a", { href: THECRAG + d.crag.path, target: "_blank", text: (d.crag.name || "Crag") + " on theCrag ↗" }));
       link.appendChild(document.createTextNode(d.partial ? " · theCrag cut us off: partial" : ""));
+      if (d.cached) {
+        var days = Math.floor((Date.now() / 1000 - d.cached) / 86400);
+        link.appendChild(document.createTextNode(" · saved " + (days < 1 ? "today" : days === 1 ? "yesterday" : days + " days ago") +
+          (d.stale ? " (theCrag not answering)" : "") + " · "));
+        var re = el("a", { href: "#", text: "refresh" });
+        re.addEventListener("click", function (ev) {
+          ev.preventDefault();
+          counts.thecrag = 0;
+          theCrag(container, host, Object.assign({}, tc, { refresh: 1, tc: "" }), opts, counts, ctx);
+        });
+        link.appendChild(re);
+      }
       host.appendChild(link);
+      // Para «Save offline»: el JSON (sin refresh) y las fotos, que ya salen de aquí.
+      opts.tcUrls = [jsonUrl].concat(d.topos.map(function (t) { return t.image || t.thumb; }).filter(Boolean));
       // Los encadenes que trae el proxy de theCrag son los de Adrián: se sustituyen por los de quien mira.
       if (ctx && ctx.crag) applySends(d.topos, ctx.sends, ctx.crag);
       d.topos.forEach(function (t) { t.source = "thecrag"; host.appendChild(drawTopo(t, {})); });

@@ -1,5 +1,5 @@
 """Croquis en el proxy: los premium de 8a.nu importados (tools/eight/import_topos.py), los de papel que suba Adrián y,
-en el visor, los de theCrag (que siguen llegando de thecrag.adrianlzt.com).
+los de theCrag (de thecrag.adrianlzt.com, guardados aquí con sus fotos para no volver a pedírselos).
 
 Modelo único: un croquis es una foto más una lista de vías con su trazo (puntos en píxeles de la foto), el mismo que
 usa el visor de theCrag. Los de 8a.nu vienen de dos sitios: la imagen de `/images/<hash>` (que 8a.nu sirve con las
@@ -12,12 +12,18 @@ Rutas (todas con la contraseña del proxy, si la hay: son contenido de pago):
   de acceso y croquis con sus vías; `sent` por vía según las ascensiones de Adrián en 8a.nu.
 - `GET /_proxy/topos/img/<hash>.jpg` → la foto (inmutable).
 - `GET /_proxy/topos/<cat>/<país>/<escuela>/page` → página suelta con el visor (para probar y para guardar sin red).
+- `GET /_proxy/topos/thecrag?country=&area=&crag=[&sector=&crag_slug=&tc=&refresh=1]` → los croquis de theCrag de esa
+  escuela: se piden una vez al proxy de theCrag (`THECRAG_PROXY`) y se guardan `THECRAG_TTL_DAYS` días; si theCrag corta
+  o el proxy no contesta, se sirve lo guardado aunque sea viejo (`stale`). `refresh=1` (o `tc=`, que fija la página a
+  mano) vuelve a pedirlos. Las fotos se reescriben a `/_proxy/topos/img/tc/<sha1>.jpg`, que se bajan de
+  image.thecrag.com la primera vez y se quedan en disco.
 
 Encadenes: los pone el visor con la sesión de 8a.nu de quien mira (`/api/dotnet/me` y la lista de ascensiones de ese
 usuario por el proxy, con su cookie), así cada uno ve los suyos; el servidor no guarda ascensiones de nadie.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -27,6 +33,7 @@ import struct
 import time
 from pathlib import Path
 
+import httpx
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from starlette.routing import Route
@@ -237,6 +244,113 @@ async def page(request: Request) -> Response:
     )
 
 
+# --- croquis de theCrag: del proxy de theCrag, guardados aquí con sus fotos -------------------------------------------------
+
+THECRAG_PROXY = os.environ.get("THECRAG_PROXY", "http://127.0.0.1:8471").rstrip("/")
+THECRAG_TTL = float(os.environ.get("THECRAG_TTL_DAYS", "30")) * 86400
+TC_PARAMS = ("country", "area", "crag", "sector", "crag_slug")
+TC_IMG_URL = re.compile(r"https://image\.thecrag\.com/[^\s\"'<>]{1,500}")
+TC_ID = re.compile(r"[0-9a-f]{40}")
+TC_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+_tc_img_sem = asyncio.Semaphore(2)
+
+
+def _tc_rewrite(db, d: dict) -> None:
+    """Las fotos de image.thecrag.com pasan a servirse desde aquí (`/_proxy/topos/img/tc/<sha1>.jpg`)."""
+    for t in d.get("topos") or []:
+        for f in ("image", "thumb"):
+            u = t.get(f)
+            if not u or u.startswith("/_proxy/"):
+                continue
+            if not TC_IMG_URL.fullmatch(u):
+                t[f] = None
+                continue
+            i = hashlib.sha1(u.encode()).hexdigest()
+            db.execute("INSERT OR IGNORE INTO thecrag_img (id, url) VALUES (?, ?)", (i, u))
+            t[f] = f"/_proxy/topos/img/tc/{i}.jpg"
+
+
+async def thecrag(request: Request) -> Response:
+    if (d := _denied(request)) is not None:
+        return d
+    qp = request.query_params
+    q = {k: qp[k].strip()[:200] for k in TC_PARAMS if qp.get(k, "").strip()}
+    tc = qp.get("tc", "")
+    if not (q.get("crag") or tc):
+        return JSONResponse({"error": "falta crag"}, status_code=400)
+    key = json.dumps({k: v.lower() for k, v in q.items()}, sort_keys=True, ensure_ascii=False)
+    with store.connect() as db:
+        row = db.execute("SELECT at, data FROM thecrag_cache WHERE key = ?", (key,)).fetchone()
+    headers = {"cache-control": "no-store"}
+    if row and not tc and qp.get("refresh") != "1" and time.time() - row["at"] < THECRAG_TTL:
+        return JSONResponse(dict(json.loads(row["data"]), cached=row["at"]), headers=headers)
+
+    def stale(why: str) -> Response:
+        return JSONResponse(dict(json.loads(row["data"]), cached=row["at"], stale=why), headers=headers)
+
+    try:
+        async with httpx.AsyncClient(timeout=150) as c:
+            r = await c.get(THECRAG_PROXY + "/_proxy/topos", params=dict(q, **({"tc": tc} if tc else {})))
+        d = r.json()
+    except Exception as e:  # noqa: BLE001
+        log.warning("proxy de theCrag: %s", e)
+        if row:
+            return stale("thecrag_proxy")
+        return JSONResponse({"error": "thecrag_proxy", "detail": str(e)[:200]}, headers=headers)
+    if not isinstance(d, dict):
+        return JSONResponse({"error": "thecrag_proxy"}, headers=headers)
+    if d.get("error"):
+        if row and d["error"] == "thecrag_blocked":
+            return stale("thecrag_blocked")
+        return JSONResponse(d, headers=headers)  # los errores (no encontrada…) no se guardan
+    if row and d.get("partial") and not tc:
+        return stale("partial")  # theCrag cortó a medias: mejor lo completo de antes
+    now = time.time()
+    with store.connect() as db:
+        _tc_rewrite(db, d)
+        db.execute("INSERT OR REPLACE INTO thecrag_cache (key, at, data) VALUES (?, ?, ?)", (key, now, json.dumps(d, ensure_ascii=False)))
+    return JSONResponse(dict(d, cached=now), headers=headers)
+
+
+def _sniff(b: bytes) -> str:
+    if b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+async def thecrag_image(request: Request) -> Response:
+    if (d := _denied(request)) is not None:
+        return d
+    i = request.path_params["id"]
+    if not TC_ID.fullmatch(i):
+        return PlainTextResponse("no", status_code=404)
+    path = TOPOS_DIR / "thecrag" / f"{i}.jpg"
+    if not path.exists():
+        with store.connect() as db:
+            row = db.execute("SELECT url FROM thecrag_img WHERE id = ?", (i,)).fetchone()
+        if not row or not TC_IMG_URL.fullmatch(row["url"]):
+            return PlainTextResponse("no", status_code=404)
+        async with _tc_img_sem:
+            if not path.exists():
+                try:
+                    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
+                        r = await c.get(row["url"], headers={"User-Agent": TC_UA, "Referer": "https://www.thecrag.com/"})
+                except Exception as e:  # noqa: BLE001
+                    log.warning("foto de theCrag %s: %s", row["url"], e)
+                    return PlainTextResponse("upstream", status_code=502)
+                if r.status_code != 200 or not r.headers.get("content-type", "").startswith("image/") or len(r.content) < 500:
+                    return PlainTextResponse("upstream", status_code=502)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_suffix(".tmp")
+                tmp.write_bytes(r.content)
+                tmp.replace(path)
+    with open(path, "rb") as f:
+        mt = _sniff(f.read(12))
+    return FileResponse(path, media_type=mt, headers={"cache-control": "private, max-age=31536000, immutable", "x-robots-tag": "noindex"})
+
+
 # --- croquis de papel: subida y edición de trazos -------------------------------------------------------------------------
 
 MAX_UPLOAD = 25 * 1024 * 1024
@@ -389,6 +503,8 @@ routes = [
     Route("/_proxy/topos/", saved_index),
     Route("/_proxy/topos/sw.js", sw),
     Route("/_proxy/topos/static/topos.js", static_js),
+    Route("/_proxy/topos/thecrag", thecrag),
+    Route("/_proxy/topos/img/tc/{id}.jpg", thecrag_image),
     Route(f"/_proxy/topos/{CRAG}/upload", upload, methods=["PUT", "POST"]),
     Route("/_proxy/topos/{hash}/routes", set_routes, methods=["PUT"]),
     Route("/_proxy/topos/{hash}", patch_topo, methods=["PATCH", "DELETE"]),
