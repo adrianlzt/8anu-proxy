@@ -49,9 +49,10 @@
     ".nut-access .body{padding:8px 10px;font-size:13px}.nut-access p{margin:6px 0;white-space:pre-line}.nut-access .kv{color:#555;font-size:12px;margin:4px 0}" +
     ".nut-access .pics{display:flex;gap:6px;overflow-x:auto;padding:4px 0}.nut-access .pics img{height:110px;border-radius:4px;cursor:pointer;background:#333}" +
     ".nut-access a.map{display:inline-block;margin:2px 10px 2px 0;color:#2a6fdb}" +
-    ".nut-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 8px}.nut-tools button,.nut-ed button{border:1px solid #bbb;background:#fff;border-radius:4px;padding:4px 10px;font-size:13px;cursor:pointer}" +
+    ".nut-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 8px}.nut-tools button,.nut-ed button{border:1px solid #bbb;background:#fff;border-radius:4px;padding:4px 10px;font-size:13px;cursor:pointer}.nut-ed button{min-height:38px;padding:6px 14px;font-size:14px;border-radius:6px}" +
     ".nut-tools button.primary,.nut-ed button.primary{background:#8b1d8b;border-color:#8b1d8b;color:#fff}.nut-ed button.danger{color:#c00}" +
-    ".nut-form{background:#fff;border:1px solid #ddd;border-radius:8px;padding:10px;margin:0 0 10px;font-size:13px}.nut-form label{display:block;margin:4px 0}.nut-form input[type=text],.nut-form select{width:100%;box-sizing:border-box;padding:5px;font-size:14px}" +
+    ".nut-form{background:#fff;border:1px solid #ddd;border-radius:8px;padding:10px;margin:0 0 10px;font-size:13px}.nut-form label{display:block;margin:4px 0}.nut-form .q{margin:10px 0 2px;font-weight:600}.nut-form label.opt{display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid #ddd;border-radius:6px;margin:4px 0;line-height:1.35}.nut-form label.opt input{margin-top:3px;flex:none;width:18px;height:18px}.nut-form label.opt small{color:#666}" +
+    ".nut-form .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}.nut-form .row button{min-height:42px;padding:8px 22px;font-size:15px;font-weight:600;border:1px solid #bbb;background:#fff;color:#333;border-radius:6px;cursor:pointer}.nut-form .row button.primary{background:#8b1d8b;border-color:#8b1d8b;color:#fff}.nut-form .row button:disabled{opacity:.5}.nut-form .row .hint{flex-basis:100%;font-size:13px;color:#555}.nut-form input[type=text],.nut-form select{width:100%;box-sizing:border-box;padding:5px;font-size:14px}" +
     ".nut-ed{background:#fff;padding:8px 10px;font-size:13px;border-top:1px solid #eee}.nut-ed .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0}" +
     ".nut-ed input{padding:4px;font-size:13px}.nut-ed input.num{width:44px}.nut-ed input.nm{flex:1;min-width:120px}.nut-ed input.g{width:56px}" +
     ".nut-ed .hint{color:#555}.nut-ed .cur{background:#eef7ff;border-radius:4px}.nut-ed .pick{max-height:200px;overflow:auto;border:1px solid #ddd;border-radius:4px}" +
@@ -436,6 +437,23 @@
         .catch(function (e) { st.textContent = "couldn't save: " + (e.message || e); btn.disabled = false; });
     });
   }
+  // La foto antes de subirla: girada según el EXIF y reducida a 3000 px de lado como mucho, en JPEG (las del móvil
+  // pesan 5–15 MB). Si el navegador no puede decodificarla, el fichero tal cual (leído antes, para que un fallo al leer
+  // se distinga de uno de red).
+  function shrinkPhoto(f) {
+    var MAX = 3000;
+    var decode = window.createImageBitmap ? createImageBitmap(f, { imageOrientation: "from-image" }) : Promise.reject(new Error("no createImageBitmap"));
+    return decode.then(function (bm) {
+      var k = Math.min(1, MAX / Math.max(bm.width, bm.height));
+      var c = document.createElement("canvas");
+      c.width = Math.round(bm.width * k); c.height = Math.round(bm.height * k);
+      c.getContext("2d").drawImage(bm, 0, 0, c.width, c.height);
+      if (bm.close) bm.close();
+      return new Promise(function (res, rej) { c.toBlob(function (b) { b ? res(b) : rej(new Error("couldn't encode")); }, "image/jpeg", 0.88); });
+    }).catch(function () {
+      return f.arrayBuffer().then(function (buf) { return new Blob([buf], { type: f.type || "image/jpeg" }); });
+    });
+  }
   // Subir una foto (croquis de papel, pantallazo…) como croquis de la escuela; luego se trazan las vías en el editor.
   function uploadForm(container, d, opts) {
     var tools = el("div", { class: "nut-tools" });
@@ -445,34 +463,48 @@
     btn.addEventListener("click", function () {
       if (container.querySelector(".nut-form")) return;
       var form = el("div", { class: "nut-form" });
-      var file = el("input", { type: "file", accept: "image/jpeg,image/png" });
+      var file = el("input", { type: "file", accept: "image/*" });
       var heading = el("input", { type: "text", placeholder: "title (e.g. guidebook page, sector)" });
       var sector = el("select");
       sector.appendChild(el("option", { value: "", text: "— sector —" }));
       (d.sectors || []).forEach(function (s) { var o = el("option", { value: s.slug || "", text: s.name || s.slug || "" }); if (opts.sector && s.slug === opts.sector) o.selected = true; sector.appendChild(o); });
-      var baked = el("input", { type: "checkbox", checked: "checked" });
+      var baked = el("input", { type: "radio", name: "nut-baked" });
+      var plain = el("input", { type: "radio", name: "nut-baked" });
+      baked.checked = true;
       var go = el("button", { type: "button", class: "primary", text: "Upload" });
       var cancel = el("button", { type: "button", text: "Cancel" });
       var msg = el("span", { class: "hint" });
       form.appendChild(el("label", { text: "Photo: " }, [file]));
       form.appendChild(el("label", { text: "Title: " }, [heading]));
       form.appendChild(el("label", { text: "Sector: " }, [sector]));
-      form.appendChild(el("label", { text: " the lines are already drawn on the photo (tracing is only for tapping)" }));
-      form.lastChild.insertBefore(baked, form.lastChild.firstChild);
+      form.appendChild(el("div", { class: "q", text: "Does the photo already show the route lines?" }));
+      form.appendChild(el("label", { class: "opt" }, [baked, el("span", {}, [el("b", { text: "Yes" }), el("small", { text: " (guidebook page): the lines you mark later stay invisible over the drawn ones; they only make each route tappable." })])]));
+      form.appendChild(el("label", { class: "opt" }, [plain, el("span", {}, [el("b", { text: "No" }), el("small", { text: " (plain photo of the wall): the viewer draws the lines you mark, in colour." })])]));
       form.appendChild(el("div", { class: "row" }, [go, cancel, msg]));
       tools.after(form);
       cancel.addEventListener("click", function () { form.remove(); });
       go.addEventListener("click", function () {
         var f = file.files && file.files[0];
         if (!f) { msg.textContent = "Pick a photo first."; return; }
-        go.disabled = true; msg.textContent = "Uploading…";
+        go.disabled = true; msg.textContent = "Preparing the photo…";
         var sName = sector.selectedOptions[0] ? sector.selectedOptions[0].textContent : "";
         var q = new URLSearchParams({ heading: heading.value || f.name, sector: sector.value, sector_name: sector.value ? sName : "", baked: baked.checked ? "1" : "0", crag_name: (d.crag && d.crag.name) || "" });
-        fetch("/_proxy/topos/" + opts.key + "/upload?" + q.toString(), { method: "PUT", body: f, credentials: "same-origin" })
-          .then(function (r) { return r.json(); }).then(function (r) {
-            if (r.error) throw new Error(r.error);
-            render(container, Object.assign({}, opts, { edit: r.hash }));
-          }).catch(function (e) { go.disabled = false; msg.textContent = "Failed: " + (e.message || e); });
+        var step = "read";
+        shrinkPhoto(f).then(function (blob) {
+          step = "send";
+          msg.textContent = "Uploading " + (blob.size / 1048576).toFixed(1) + " MB…";
+          return fetch("/_proxy/topos/" + opts.key + "/upload?" + q.toString(), { method: "PUT", body: blob, headers: { "content-type": blob.type || "image/jpeg" }, credentials: "same-origin" });
+        }).then(function (r) {
+          step = "answer";
+          return r.json().catch(function () { throw new Error("server answered " + r.status); });
+        }).then(function (r) {
+          if (r.error) throw new Error(r.error);
+          render(container, Object.assign({}, opts, { edit: r.hash }));
+        }).catch(function (e) {
+          go.disabled = false;
+          msg.textContent = step === "read" ? "Couldn't read the photo from the phone (" + (e.message || e) + "). Try picking it again, or from Files instead of the gallery." :
+            step === "send" ? "Couldn't reach the server (" + (e.message || e) + "). Check the connection and try again." : "Failed: " + (e.message || e);
+        });
       });
     });
   }
