@@ -13,6 +13,7 @@ Overpass y Open-Meteo limitan peticiones: un solo trabajador en segundo plano la
 """
 
 import asyncio
+import functools
 import json
 import logging
 import math
@@ -127,19 +128,17 @@ def cliff_aspect(lines: list[list[tuple[float, float]]], lat: float, lon: float)
 # --- Trabajador --------------------------------------------------------------------------------------------------------
 
 
-async def _terrain(app, key: str, lat: float, lon: float) -> None:
+async def _terrain(app, key: str, lat: float, lon: float, background: bool = False) -> None:
     pts = cond.terrain_rays(lat, lon)
     params = {"latitude": ",".join(f"{p[2]:.6f}" for p in pts), "longitude": ",".join(f"{p[3]:.6f}" for p in pts)}
-    r = await app.state.plain.get(f"{cond.OPEN_METEO}/elevation?{urlencode(params)}")
-    if r.status_code != 200:
-        raise RuntimeError(f"elevation {r.status_code}")
-    deg, slope = cond.rays_aspect(pts, r.json()["elevation"])
+    data = await cond.om_get(app.state.plain, f"{cond.OPEN_METEO}/elevation", params, background=background)
+    deg, slope = cond.rays_aspect(pts, data["elevation"])
     store.set_aspect(key, "", deg, "terrain", slope)
 
 
-async def resolve_terrain(app, key: str, lat: float, lon: float) -> None:
+async def resolve_terrain(app, key: str, lat: float, lon: float, background: bool = False) -> None:
     if current(key)["source"] == "default":
-        await _terrain(app, key, lat, lon)
+        await _terrain(app, key, lat, lon, background)
 
 
 async def resolve_osm(app, key: str, lat: float, lon: float) -> None:
@@ -161,7 +160,7 @@ async def resolve(app, key: str, lat: float, lon: float) -> None:
 
 async def worker(app, source: str) -> None:
     q = _queues[source] = asyncio.Queue()
-    fn = resolve_terrain if source == "terrain" else resolve_osm
+    fn = functools.partial(resolve_terrain, background=True) if source == "terrain" else resolve_osm
     while True:
         key, lat, lon = await q.get()
         try:

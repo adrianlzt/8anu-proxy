@@ -18,6 +18,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainT
 from starlette.routing import Route
 
 from . import aspect
+from . import aspect as aspect_mod
 from . import conditions as cond
 from . import meteo
 from . import store
@@ -65,10 +66,7 @@ def _key(request: Request) -> str | None:
 
 async def _om_get(app, path: str, params: dict) -> dict:
     session: AsyncSession = app.state.plain
-    r = await session.get(f"{cond.OPEN_METEO}/{path}?{urlencode(params)}")
-    if r.status_code != 200:
-        raise RuntimeError(f"Open-Meteo {path}: {r.status_code} {r.text[:200]}")
-    return r.json()
+    return await cond.om_get(session, f"{cond.OPEN_METEO}/{path}", params)
 
 
 async def _crag(app, key: str) -> tuple[dict, list[dict], str | None]:
@@ -158,10 +156,17 @@ async def conditions_json(request: Request) -> Response:
             crag, sectors, rock = await _crag(request.app, key)
         except LookupError as e:
             return JSONResponse({"error": str(e)}, status_code=404)
+        except Exception as e:  # noqa: BLE001 — que la web vea el motivo y no un «Internal Server Error» en texto
+            return JSONResponse({"error": f"couldn't read the crag from 8a.nu: {e}"}, status_code=502)
         if not crag.get("location"):
             return JSONResponse({"error": "8a.nu has no coordinates for this crag"}, status_code=404)
         lat, lon = crag["location"]["latitude"], crag["location"]["longitude"]
-        weather, aspect = await asyncio.gather(_weather(request.app, lat, lon), _aspect(request.app, key, lat, lon))
+        # El tiempo no espera a la orientación ni cae con ella (_aspect se arregla con lo que haya).
+        weather, aspect = await asyncio.gather(_weather(request.app, lat, lon), _aspect(request.app, key, lat, lon), return_exceptions=True)
+        if isinstance(aspect, BaseException):
+            aspect = aspect_mod.current(key)
+        if isinstance(weather, BaseException):
+            return JSONResponse({"error": f"couldn't get the weather: {weather}"}, status_code=502)
     data = cond.build(crag, sectors, weather, aspect, p, rock_type=rock)
     # Sol de cada sector con orientación propia (para «Sun on the wall»).
     for s in data["crag"]["sectors"]:

@@ -9,6 +9,7 @@ La puntuación (v2, idea de SendScore) son reglas físicas aproximadas, no un mo
 «Puntuación (v2)» más abajo.
 """
 
+import asyncio
 import functools
 import math
 import time
@@ -21,6 +22,11 @@ HOURLY = (
     "cloud_cover,wind_speed_10m,wind_gusts_10m,wind_direction_10m,is_day,shortwave_radiation"
 )
 WEATHER_TTL = 30 * 60
+# Cupo gratuito de Open-Meteo: 600 llamadas por minuto (5.000/h), y una petición cuenta como varias: una por punto, y
+# más si pide más de 10 variables o más de 14 días. La orientación por relieve son 65 puntos de golpe: sin freno, el mapa
+# de una zona con muchas escuelas sin orientar agotaba el minuto y el tiempo de las condiciones daba 429.
+OM_PER_MIN = 500
+OM_BACKGROUND = 0.5  # lo de segundo plano (orientación del mapa) solo usa esta parte del minuto
 CRAG_TTL = 24 * 3600
 
 CATEGORIES = [(80, "great"), (65, "good"), (45, "ok"), (0, "bad")]
@@ -583,3 +589,49 @@ def build(
 
 def _noon(hours: list[dict], date: str) -> int:
     return next((i for i, h in enumerate(hours) if h["time"] == f"{date}T13:00"), 0)
+
+
+# --- Open-Meteo con freno -----------------------------------------------------------------------------------------------
+
+_om: dict = {"until": 0.0, "used": []}
+
+
+def om_weight(params: dict) -> float:
+    """Llamadas que cuenta Open-Meteo por una petición: puntos × (variables/10) × (días/14), cada factor al menos 1."""
+    points = max(1, str(params.get("latitude", "")).count(",") + 1)
+    nvars = len([v for v in str(params.get("hourly") or params.get("daily") or "").split(",") if v])
+    days = float(params.get("forecast_days") or 1) + float(params.get("past_days") or 0)
+    return points * max(1.0, nvars / 10) * max(1.0, days / 14)
+
+
+async def om_get(session, url: str, params: dict, background: bool = False, max_wait: float = 15) -> dict:
+    """GET a Open-Meteo dentro del cupo. Lo de primer plano espera como mucho `max_wait` s a que haya hueco; lo de
+    segundo plano espera lo que haga falta y deja la otra mitad del minuto libre. Tras un 429, nadie pide nada hasta que
+    pase el corte (un minuto, o más si es el cupo por hora o por día) y se reintenta una vez si da tiempo."""
+    from urllib.parse import urlencode
+
+    weight = om_weight(params)
+    cap = OM_PER_MIN * (OM_BACKGROUND if background else 1)
+    for attempt in range(2):
+        while True:
+            now = time.monotonic()
+            _om["used"] = [u for u in _om["used"] if now - u[0] < 60]
+            used = sum(w for _, w in _om["used"])
+            wait = max(0.0, _om["until"] - now)
+            if not wait and used + weight > cap and _om["used"]:
+                wait = 60.5 - (now - _om["used"][0][0])
+            if wait <= 0:
+                break
+            if not background and wait > max_wait:
+                raise RuntimeError(f"Open-Meteo is rate-limiting us; try again in {int(wait) + 1} s")
+            await asyncio.sleep(wait)
+        _om["used"].append((time.monotonic(), weight))
+        r = await session.get(f"{url}?{urlencode(params)}")
+        if r.status_code == 200:
+            return r.json()
+        if r.status_code != 429:
+            raise RuntimeError(f"Open-Meteo {r.status_code}: {r.text[:200]}")
+        text = r.text
+        pause = 24 * 3600 if "Daily" in text else 15 * 60 if "Hourly" in text else 65
+        _om["until"] = max(_om["until"], time.monotonic() + pause)
+    raise RuntimeError("Open-Meteo is rate-limiting us; try again in a minute")

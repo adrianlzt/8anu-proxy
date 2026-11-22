@@ -101,3 +101,39 @@ def test_ventana_vale_su_peor_hora():
     hours = [{"day": True, "score": s} for s in (90, 90, 30, 70, 70, 70)]
     a, b, low = cond.best_window(hours)
     assert (a, b, low) == (3, 6, 70)
+
+
+def test_open_meteo_limit():
+    """El relieve (65 puntos) cuenta 65 llamadas; tras un 429 no se pide nada más y el primer plano da un error legible."""
+    import asyncio
+
+    import pytest
+
+    from app import conditions as cond
+
+    pts = cond.terrain_rays(40, -3)
+    assert cond.om_weight({"latitude": ",".join("1" for _ in pts)}) == len(pts) == 65
+    assert cond.om_weight({"latitude": 1, "hourly": cond.HOURLY, "past_days": 5, "forecast_days": 8}) == 1.2
+
+    class R:
+        def __init__(self, code, text=""):
+            self.status_code, self.text = code, text
+
+        def json(self):
+            return {"ok": 1}
+
+    calls = []
+
+    class S:
+        async def get(self, url):
+            calls.append(url)
+            return R(429, '{"reason":"Minutely API request limit exceeded"}')
+
+    cond._om.update(until=0.0, used=[])
+    with pytest.raises(RuntimeError, match="rate-limiting"):
+        asyncio.run(cond.om_get(S(), "https://x/forecast", {"latitude": 1}))
+    assert len(calls) == 1  # el reintento esperaría 65 s: no se hace en primer plano
+    with pytest.raises(RuntimeError, match="rate-limiting"):
+        asyncio.run(cond.om_get(S(), "https://x/forecast", {"latitude": 1}))
+    assert len(calls) == 1  # en pausa: ni se pregunta
+    cond._om.update(until=0.0, used=[])

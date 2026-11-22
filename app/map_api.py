@@ -155,10 +155,7 @@ async def _weather_cells(app, cells: set[tuple[float, float]]) -> dict[tuple[flo
         chunk = todo[i : i + OM_BATCH]
         params = {"latitude": ",".join(str(c[0]) for c in chunk), "longitude": ",".join(str(c[1]) for c in chunk),
                   "hourly": cond.HOURLY, "forecast_days": 7, "timezone": "auto", "wind_speed_unit": "kmh"}  # fmt: skip
-        r = await app.state.plain.get(f"{cond.OPEN_METEO}/forecast?{urlencode(params)}")
-        if r.status_code != 200:
-            raise RuntimeError(f"Open-Meteo {r.status_code}: {r.text[:200]}")
-        data = r.json()
+        data = await cond.om_get(app.state.plain, f"{cond.OPEN_METEO}/forecast", params, max_wait=30)
         for cell, w in zip(chunk, data if isinstance(data, list) else [data]):
             w["_fetched"] = fetched
             _wx[cell] = (now, w)

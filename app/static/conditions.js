@@ -132,7 +132,9 @@
     const p = prefs();
     try {
       const r = await fetch(`/_proxy/conditions/${key}/data?tmin=${p.tmin}&tmax=${p.tmax}`);
-      const d = await r.json();
+      const t = await r.text();
+      let d;
+      try { d = JSON.parse(t); } catch (_) { throw new Error(`the proxy answered ${r.status} (${t.slice(0, 80)})`); }
       if (!r.ok) throw new Error(d.error || r.status);
       state.data = d;
       if (state.sel == null || state.sel >= d.days.length) state.sel = d.today;

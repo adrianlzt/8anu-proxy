@@ -44,10 +44,7 @@ _cache: dict[tuple, tuple[float, dict]] = {}
 
 
 async def _get(app, url: str, params: dict) -> dict:
-    r = await app.state.plain.get(f"{url}?{urlencode(params)}")
-    if r.status_code != 200:
-        raise RuntimeError(f"Open-Meteo {r.status_code}: {r.text[:200]}")
-    return r.json()
+    return await cond.om_get(app.state.plain, url, params)
 
 
 def _pct(values: list[float], q: float) -> float:
