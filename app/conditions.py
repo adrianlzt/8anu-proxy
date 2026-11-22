@@ -2,8 +2,8 @@
 
 Fuentes: la escuela (coordenadas, sectores, «rainSafety») de la API pública de 8a.nu; previsión horaria de
 Open-Meteo (5 días pasados + 7 de previsión); orientación de la pared de lo que haya dicho el usuario («Know this
-crag?») o, si no, estimada con el relieve (elevaciones de Open-Meteo alrededor de la escuela). El sol en la pared se
-calcula con la posición del sol (NOAA) y esa orientación.
+crag?»), theCrag, los acantilados de OSM o, si no, el relieve con modelos digitales de elevación (ver
+app/aspect.py). El sol en la pared se calcula con la posición del sol (NOAA) y esa orientación.
 
 La puntuación (v2, idea de SendScore) son reglas físicas aproximadas, no un modelo ajustado con ascensiones: ver
 «Puntuación (v2)» más abajo.
@@ -121,6 +121,18 @@ def wall_sun(day: datetime, utc_offset: int, lat: float, lon: float, aspect: flo
     if main:
         margin = max(main[0][0] - first, last - main[-1][1])
     return {"sun": main, "possible": [(first, last)], "daylight": light, "margin": round(margin / 10) * 10}
+
+
+def faces_sun(day: datetime, utc_offset: int, lat: float, lon: float, aspect: dict) -> dict:
+    """Sol de la pared principal (con su margen) y, como «posible», el de las otras caras que haya visto el relieve
+    (paredes en U, espolones): la puntuación cuenta solo la principal."""
+    out = wall_sun(day, utc_offset, lat, lon, aspect["deg"], aspect.get("spread") or 15)
+    if aspect.get("source") == "dem":
+        others = [f for f in aspect.get("faces") or [] if abs((f["deg"] - aspect["deg"] + 180) % 360 - 180) > 30]
+        for f in others:
+            sun, _ = sun_intervals(day, utc_offset, lat, lon, f["deg"])
+            out["possible"] = out["possible"] + sun
+    return out
 
 
 def hourly_sun_fraction(sun: list[tuple[int, int]], hour: int) -> float:
@@ -538,7 +550,7 @@ def build(
     dates = sorted({h["time"][:10] for h in hours})
     suns = {}
     for d in dates:
-        suns[d] = wall_sun(datetime.fromisoformat(d), offset, lat, lon, aspect["deg"])
+        suns[d] = faces_sun(datetime.fromisoformat(d), offset, lat, lon, aspect)
     for h in hours:
         h["sun"] = round(hourly_sun_fraction(suns[h["time"][:10]]["sun"], int(h["time"][11:13])), 2)
     rock = Rock(rock_type or "limestone", bool(crag.get("rainSafety")))

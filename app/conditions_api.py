@@ -109,15 +109,16 @@ async def _weather(app, lat: float, lon: float) -> dict:
 
 
 async def _aspect(app, key: str, lat: float, lon: float) -> dict:
-    """Orientación (ver app/aspect.py). La primera vez que se abre una escuela: el relieve enseguida (una llamada a
-    Open-Meteo) y los acantilados de OSM como mucho OSM_WAIT s; si Overpass tarda más, sigue en segundo plano."""
+    """Orientación (ver app/aspect.py). La primera vez que se abre una escuela que no está en la pasada del DEM: el
+    relieve enseguida (~1 s, sin red de cupos) y los acantilados de OSM como mucho OSM_WAIT s; si Overpass tarda más,
+    sigue en segundo plano."""
     a = aspect.current(key)
-    if a["source"] == "default":
+    if a["source"] in ("default", "terrain"):
         try:
-            await asyncio.wait_for(aspect.resolve_terrain(app, key, lat, lon), 10)
+            await asyncio.wait_for(asyncio.shield(aspect.resolve_dem(key, lat, lon)), 10)
         except Exception as e:  # noqa: BLE001 — se usa lo que haya
-            aspect.log.warning("orientación (terrain) de %s: %s", key, e)
-    if aspect.current(key)["source"] in ("default", "terrain"):
+            aspect.log.warning("orientación (dem) de %s: %s", key, e)
+    if aspect.current(key)["source"] in ("default", "terrain", "dem"):
         try:
             await asyncio.wait_for(asyncio.shield(aspect.resolve_osm(app, key, lat, lon)), OSM_WAIT)
         except Exception:  # noqa: BLE001 — Overpass lento o caído: que lo termine el trabajador

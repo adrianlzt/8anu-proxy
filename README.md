@@ -18,9 +18,16 @@ suelta en `/_proxy/conditions/<cat>/<país>/<escuela>`.
   pública de 8a.nu (`/api/unification/outdoor/v1/web/crags/…`, sin sesión: coordenadas, sectores, `rainSafety`,
   temporada); el tiempo de [Open-Meteo](https://open-meteo.com) (horario, 5 días atrás + 8 adelante, caché 30 min).
 - **Orientación de la pared**: la que haya puesto el usuario en «Know this crag?» (`POST …/aspect`, también por
-  sector) o, si no, estimada por el relieve: elevaciones de Open-Meteo en 16 rumbos a 60–300 m; la pared mira al lado
-  contrario de donde más sube el terreno (`rays_aspect`). Es una estimación (las coordenadas de 8a.nu no siempre
-  están en la pared) y la página lo dice.
+  sector), theCrag, los acantilados de OSM o, si no, estimada por el relieve con modelos digitales de elevación
+  (`tools/dem/aspect.py`, fuente `dem`): MDT05 del IGN (5 m) en España y Copernicus GLO-30 en el resto, leyendo solo
+  la ventana de cada escuela (WCS del IGN; bloques de los COG públicos de AWS), sin guardar teselas. Una pasada para
+  las ~13.800 escuelas del mapa tarda ~5 min y baja ~7 GB; las nuevas se calculan al pedirlas (~1 s, otro proceso
+  con el Python del sistema, que tiene GDAL y numpy). Se queda con las celdas más empinadas a <200 m, agrupadas por
+  orientación: varias caras si las hay (`faces`, las otras salen como sol «posible»), margen (`spread`) y de dónde
+  sale (`meta`: modelo, resolución, método, fecha, confianza). Frente a los acantilados de OSM acierta a <45° en ~77 %
+  (IGN) / ~70 % (Copernicus). Es una estimación (las coordenadas de 8a.nu no siempre están en la pared; con 30 m no se
+  ven paredes pequeñas) y la página lo dice, y también si el relieve discrepa de OSM/theCrag. Open-Meteo ya solo se
+  usa para el tiempo (las filas `terrain` viejas quedan por debajo de `dem`).
 - **Sol en la pared**: posición del sol (NOAA) cada 5 min; hay sol si está a más de 3° y por delante de la pared. La
   incertidumbre (±) es la diferencia con la orientación ±15°. No tiene en cuenta el horizonte (montañas).
 - **Puntuación v2** (`app/conditions.py`, ideas de [SendScore](https://www.sendscore.info/thescore)), por horas,
@@ -51,9 +58,9 @@ suelta en `/_proxy/conditions/<cat>/<país>/<escuela>`.
   Condiciones de todo lo visible (hasta 2000 escuelas, por tandas de 400): el tiempo se pide por celdas de 0,1°
   (las escuelas cercanas lo comparten), hasta 100 celdas por llamada a Open-Meteo, con una hora de caché; el sol de
   cada día se calcula una vez por lugar. 300 escuelas ≈ 2 llamadas y 4 s; repetido, 0,1 s.
-- **Orientación** (`app/aspect.py`): usuario > acantilados de OpenStreetMap (`natural=cliff` a <250 m; en OSM la
+- **Orientación** (`app/aspect.py`): usuario > theCrag > acantilados de OpenStreetMap (`natural=cliff` a <250 m; en OSM la
   pared mira a la derecha del sentido de la línea; Overpass por cuadrículas de 0,25°, guardadas en
-  `~/.cache/8anu-proxy/cliffs/`, con servidores alternativos porque Overpass va saturado) > relieve (Open-Meteo) >
+  `~/.cache/8anu-proxy/cliffs/`, con servidores alternativos porque Overpass va saturado) > relieve (DEM) >
   sur supuesto. En el mapa se resuelven en segundo plano (relieve enseguida, OSM despacio) y el mapa vuelve a
   preguntar; en la página de una escuela se resuelve al abrirla.
 - **Datos del usuario**: orientaciones y webcams en SQLite (`~/.local/share/8anu-proxy/data.db`, `DATA_DIR`).

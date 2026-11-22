@@ -4,7 +4,23 @@
 (function () {
   "use strict";
   const ROUTE = /^\/crags\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-z0-9-]+)\/conditions\/?$/;
-  const SRC = { user: "set by you", thecrag: "from theCrag", osm: "from OpenStreetMap cliffs", terrain: "estimated from terrain", default: "unknown, assumed south" };
+  const SRC = { user: "set by you", thecrag: "from theCrag", osm: "from OpenStreetMap cliffs", dem: "estimated from an elevation model", terrain: "estimated from terrain", default: "unknown, assumed south" };
+  const DEM_NAME = { "ign-mdt05": "IGN 5 m elevation model", "copernicus-glo30": "Copernicus 30 m elevation model", "copernicus-glo90": "Copernicus 90 m elevation model" };
+  // De dónde sale la orientación, con lo que haga falta para fiarse de ella: modelo de elevación, otras caras y si el
+  // relieve discrepa de lo elegido.
+  function aspectSrc(a, long) {
+    let t = SRC[a.source] || a.source;
+    if (a.source === "dem") {
+      t = `estimated from the ${DEM_NAME[(a.meta || {}).dem] || "elevation model"}${long ? `, ±${Math.round(a.spread || 15)}°, may be wrong` : ""}`;
+      const others = (a.faces || []).slice(1).map((f) => `${COMPASS16(f.deg)} (${Math.round(f.weight * 100)} %)`);
+      if (others.length) t += `; other faces: ${others.join(", ")}`;
+    } else if (a.source === "terrain" && long) t = `estimated from the terrain (slope ${a.slope}°), may be wrong`;
+    if (a.dem && a.dem.diff > 60 && a.source !== "user") t += `; the elevation model says ${a.dem.compass}`;
+    return t;
+  }
+  function COMPASS16(deg) {
+    return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][Math.round((deg % 360) / 22.5) % 16];
+  }
   const CAT_LABEL = { great: "Great", good: "Good", ok: "OK", bad: "Bad", night: "Night" };
   const PREFS_KEY = "nuc-prefs";
   const DAYNAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -350,12 +366,12 @@
     const lead = s.sun.length ? `${esc(d.crag.name)} gets sun from ${fmtMin(s.sun[0][0])} until ${fmtMin(s.sun[s.sun.length - 1][1])}.` : `${esc(d.crag.name)} gets no direct sun.`;
     return `<section class="nuc-card"><div class="nuc-pad nuc-row"><h2>Sun on the wall</h2><small>${dayLabel(x, state.sel)}, ${shortDate(x.date)}</small></div>
       <div class="nuc-pad"><p>${lead}</p>
-      <div class="nuc-row"><b>${esc(d.crag.name)}</b><small>Wall ${SRC[a.source] || a.source} · faces ${esc(a.compass)} (${Math.round(a.deg)}°)</small></div>
+      <div class="nuc-row"><b>${esc(d.crag.name)}</b><small>Wall ${esc(aspectSrc(a, false))} · faces ${esc(a.compass)} (${Math.round(a.deg)}°)</small></div>
       ${sunBar(s)}<div class="nuc-suntext">${sunText(s)}</div><hr>
       <div class="nuc-muted">${d.crag.sectors.length} sectors</div>
       ${mapped.length ? sect : `<div class="nuc-muted">Same as the crag: no wall data of their own yet</div>`}
       <a href="#" class="nuc-link" data-know="1">Tell us when they get sun</a>
-      <div class="nuc-legend"><span><i class="nuc-k-sun"></i>Sun on the wall</span><span><i class="nuc-k-maybe"></i>Uncertainty (±)</span><span><i class="nuc-k-day"></i>Daylight</span></div>
+      <div class="nuc-legend"><span><i class="nuc-k-sun"></i>Sun on the wall</span><span><i class="nuc-k-maybe"></i>Uncertainty (±) or another face</span><span><i class="nuc-k-day"></i>Daylight</span></div>
       </div></section>`;
   }
 
@@ -364,7 +380,7 @@
     const tcls = w.temperature.state === "In your range" ? "nuc-green" : /Close/.test(w.temperature.state) ? "nuc-amber" : "nuc-red";
     const rcls = w.rock.state === "Dry" ? "nuc-green" : "nuc-red";
     const mapped = d.crag.sectors.filter((z) => z.aspect != null).length;
-    const src = a.source === "terrain" ? `estimated from the terrain (slope ${a.slope}°), may be wrong` : SRC[a.source] || a.source;
+    const src = esc(aspectSrc(a, true));
     const fcls = (v) => (v >= 0.95 ? "great" : v >= 0.8 ? "good" : v >= 0.6 ? "ok" : "bad");
     const bars = (w.factors || []).map((f) => `<div class="nuc-factor"><div class="nuc-row"><b>${esc(f.label)}</b><small>${esc(f.text)}</small></div>
       <div class="nuc-fbar"><span class="nuc-bg-${fcls(f.value)}" style="width:${Math.max(4, f.value * 100)}%"></span></div></div>`).join("");

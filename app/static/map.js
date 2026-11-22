@@ -127,7 +127,7 @@
 
   function popup(c) {
     const d = dayOf(c), x = st.cond[c.key], f = filters();
-    const src = x ? { user: "set by you", osm: "from OpenStreetMap cliffs", terrain: "estimated from terrain", default: "not known yet" }[x.aspect_source] : "";
+    const src = x ? { user: "set by you", thecrag: "from theCrag", osm: "from OpenStreetMap cliffs", dem: "from the elevation model", terrain: "estimated from terrain", default: "not known yet" }[x.aspect_source] : "";
     const cond = d ? `<p><span class="m-badge c-${d.cat}">${LABEL[d.cat]}</span> ${d.window ? `best ${d.window.from}–${d.window.to}` : "no good window"} · ${d.tmax}°/${d.tmin}° · ${d.rain} mm · ${esc(d.rock)}</p>
       <p class="m-muted">Wall faces ${esc(x.aspect)} (${src})</p>` : "<p class=\"m-muted\">Conditions not loaded yet</p>";
     return `<div class="m-pop"><b>${esc(c.name)}</b><br><small>${esc(c.area || c.country)} · ${c.cat === 1 ? "boulder" : "sport"} · ${c.routes} routes · <b>${inRange(c, f)}</b> in ${gname(f.gfrom, c.cat)}–${gname(f.gto, c.cat)} · ★${c.rating}</small>

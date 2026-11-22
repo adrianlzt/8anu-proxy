@@ -1,6 +1,7 @@
 """Lo que aporta el usuario en la página de condiciones (orientación de la escuela y de sus sectores, webcams) y la
 orientación calculada por el relieve, en una SQLite (DATA_DIR, por defecto ~/.local/share/8anu-proxy)."""
 
+import json
 import os
 import sqlite3
 import time
@@ -35,6 +36,9 @@ CREATE TABLE IF NOT EXISTS topo_route (
 CREATE TABLE IF NOT EXISTS thecrag_cache (key TEXT PRIMARY KEY, at REAL NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS thecrag_img (id TEXT PRIMARY KEY, url TEXT NOT NULL);
 """
+# Columnas añadidas después (ver tools/dem/aspect.py): margen de la orientación principal en grados, caras (JSON
+# [{deg, weight, spread, slope}]) y de dónde sale (JSON: modelo de elevación, resolución, método, fecha, confianza).
+MIGRATIONS = {"spread": "REAL", "faces": "TEXT", "meta": "TEXT"}
 
 
 def connect() -> sqlite3.Connection:
@@ -42,6 +46,10 @@ def connect() -> sqlite3.Connection:
     db = sqlite3.connect(DATA_DIR / "data.db")
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
+    cols = {r[1] for r in db.execute("PRAGMA table_info(aspect)")}
+    for col, typ in MIGRATIONS.items():
+        if col not in cols:
+            db.execute(f"ALTER TABLE aspect ADD COLUMN {col} {typ}")
     return db
 
 
@@ -50,12 +58,17 @@ def get_aspects(crag: str) -> list[dict]:
         return [dict(r) for r in db.execute("SELECT * FROM aspect WHERE crag = ?", (crag,))]
 
 
-def set_aspect(crag: str, sector: str, deg: float, source: str, slope: float | None = None) -> None:
+def set_aspect(
+    crag: str, sector: str, deg: float, source: str, slope: float | None = None, spread: float | None = None,
+    faces: list[dict] | None = None, meta: dict | None = None,
+) -> None:  # fmt: skip
     with connect() as db:
         db.execute(
-            "INSERT OR REPLACE INTO aspect (crag, sector, deg, source, slope, updated) VALUES (?, ?, ?, ?, ?, ?)",
-            (crag, sector, deg % 360, source, slope, time.time()),
-        )
+            "INSERT OR REPLACE INTO aspect (crag, sector, deg, source, slope, updated, spread, faces, meta)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (crag, sector, deg % 360, source, slope, time.time(), spread, json.dumps(faces) if faces else None,
+             json.dumps(meta) if meta else None),
+        )  # fmt: skip
 
 
 def get_webcams(crag: str) -> list[dict]:

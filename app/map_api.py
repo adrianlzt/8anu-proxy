@@ -195,9 +195,9 @@ async def conditions_json(request: Request) -> Response:
     out, now = {}, time.time()
     for c in crags:
         asp = aspect.current(c["key"])
-        if asp["source"] == "default":
-            aspect.request(c["key"], c["lat"], c["lon"], "terrain")
         if asp["source"] in ("default", "terrain"):
+            aspect.request(c["key"], c["lat"], c["lon"], "dem")
+        if asp["source"] in ("default", "terrain", "dem"):
             aspect.request(c["key"], c["lat"], c["lon"], "osm")
         ck = (c["key"], p.tmin, p.tmax, round(asp["deg"]), _wx[_cell(c)][0])
         hit = _summary.get(ck)

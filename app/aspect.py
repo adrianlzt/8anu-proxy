@@ -1,26 +1,28 @@
-"""Orientación de la pared de cada escuela, por este orden:
+"""Orientación de la pared de cada escuela, por este orden (cada fuente es una fila aparte en la SQLite, `aspect`, y
+ninguna pisa a otra: se elige al leer):
 
 1. la que ha puesto el usuario («Know this crag?»);
-2. OpenStreetMap: los acantilados (`natural=cliff`) a menos de RADIUS m de la escuela. En OSM un acantilado se
+2. theCrag (tools/thecrag);
+3. OpenStreetMap: los acantilados (`natural=cliff`) a menos de RADIUS m de la escuela. En OSM un acantilado se
    dibuja con la parte de arriba a la izquierda, así que la pared mira a la derecha del sentido de la línea; se hace
    la media de los tramos, pesando por longitud y cercanía;
-3. el relieve: elevaciones de Open-Meteo alrededor (la pared mira al lado contrario de donde más sube el terreno);
-4. si nada de eso se ha podido calcular todavía, sur, marcado como supuesto.
+4. el relieve con modelos digitales de elevación (fuente «dem», tools/dem/aspect.py: MDT05 del IGN en España,
+   Copernicus GLO-30 en el resto), con varias caras si las hay y de dónde sale (modelo, resolución, método, fecha).
+   Se calcula de una pasada para todas las escuelas del mapa; las que falten, con el mismo script, una a una;
+5. «terrain»: lo que se calculó antes con las elevaciones de Open-Meteo (ya no se pide; queda por si no hay DEM);
+6. si nada de eso se ha podido calcular todavía, sur, marcado como supuesto.
 
 Los acantilados se piden a Overpass por cuadrículas de TILE grados (una petición sirve para todas las escuelas de la
-zona) y se guardan en disco; el resultado de cada escuela se guarda en la SQLite (`aspect`, fuente osm/terrain).
-Overpass y Open-Meteo limitan peticiones: un solo trabajador en segundo plano las va haciendo despacio.
+zona) y se guardan en disco. Overpass limita peticiones: un solo trabajador en segundo plano las va haciendo despacio.
 """
 
 import asyncio
-import functools
 import json
 import logging
 import math
 import os
 import time
 from pathlib import Path
-from urllib.parse import urlencode
 
 from . import conditions as cond
 from . import store
@@ -36,9 +38,14 @@ RADIUS = 250
 CLIFF_DIR = Path(os.environ.get("CACHE_DIR", Path.home() / ".cache" / "8anu-proxy")) / "cliffs"
 CLIFF_TTL = 60 * 24 * 3600
 
-# Dos colas: el relieve es rápido (una llamada a Open-Meteo) y da algo enseguida; OSM es lento (Overpass) y lo mejora.
+DEM_TOOL = Path(__file__).resolve().parents[1] / "tools" / "dem" / "aspect.py"
+DEM_PYTHON = os.environ.get("DEM_PYTHON", "/usr/bin/python3")  # el del sistema, con GDAL y numpy
+DEM_TIMEOUT = 90
+PRIORITY = ("user", "thecrag", "osm", "dem", "terrain")
+
+# Dos colas: el DEM es rápido (~1 s, sin cupos) y da algo enseguida; OSM es lento (Overpass) y lo mejora.
 _queues: dict[str, asyncio.Queue] = {}
-_pending: dict[str, set[str]] = {"terrain": set(), "osm": set()}
+_pending: dict[str, set[str]] = {"dem": set(), "osm": set()}
 
 
 def current(key: str) -> dict:
@@ -50,16 +57,26 @@ def current(key: str) -> dict:
         for r in rows:
             if r["sector"] and r["source"] == source:
                 sectors[r["sector"]], sector_src[r["sector"]] = r["deg"], source
-    for source in ("user", "thecrag", "osm", "terrain"):
-        r = next((r for r in rows if r["sector"] == "" and r["source"] == source), None)
+    crag = {r["source"]: r for r in rows if r["sector"] == ""}
+    for source in PRIORITY:
+        r = crag.get(source)
         if r:
-            return {"deg": r["deg"], "source": source, "compass": cond.compass(r["deg"]), "slope": round(r["slope"] or 0),
-                    "sectors": sectors, "sector_src": sector_src}  # fmt: skip
-    return {"deg": 180.0, "source": "default", "compass": "S?", "slope": 0, "sectors": sectors, "sector_src": sector_src}
+            out = {"deg": r["deg"], "source": source, "compass": cond.compass(r["deg"]), "slope": round(r["slope"] or 0),
+                   "sectors": sectors, "sector_src": sector_src, "spread": r.get("spread"),
+                   "faces": json.loads(r["faces"]) if r.get("faces") else [],
+                   "meta": json.loads(r["meta"]) if r.get("meta") else None}  # fmt: skip
+            dem = crag.get("dem")
+            if source != "dem" and dem:
+                # El relieve como segunda opinión: si discrepa mucho de lo elegido, la página lo dice
+                diff = abs((dem["deg"] - r["deg"] + 180) % 360 - 180)
+                out["dem"] = {"deg": dem["deg"], "compass": cond.compass(dem["deg"]), "diff": round(diff)}
+            return out
+    return {"deg": 180.0, "source": "default", "compass": "S?", "slope": 0, "sectors": sectors, "sector_src": sector_src,
+            "spread": None, "faces": [], "meta": None}  # fmt: skip
 
 
 def request(key: str, lat: float, lon: float, source: str) -> None:
-    """Pide en segundo plano la orientación de una escuela: `terrain` (si no tiene ninguna) u `osm`."""
+    """Pide en segundo plano la orientación de una escuela: `dem` (si no la tiene) u `osm`."""
     q = _queues.get(source)
     if q is None or key in _pending[source]:
         return
@@ -128,17 +145,28 @@ def cliff_aspect(lines: list[list[tuple[float, float]]], lat: float, lon: float)
 # --- Trabajador --------------------------------------------------------------------------------------------------------
 
 
-async def _terrain(app, key: str, lat: float, lon: float, background: bool = False) -> None:
-    pts = cond.terrain_rays(lat, lon)
-    params = {"latitude": ",".join(f"{p[2]:.6f}" for p in pts), "longitude": ",".join(f"{p[3]:.6f}" for p in pts)}
-    data = await cond.om_get(app.state.plain, f"{cond.OPEN_METEO}/elevation", params, background=background)
-    deg, slope = cond.rays_aspect(pts, data["elevation"])
-    store.set_aspect(key, "", deg, "terrain", slope)
+_dem_sem = asyncio.Semaphore(2)
 
 
-async def resolve_terrain(app, key: str, lat: float, lon: float, background: bool = False) -> None:
-    if current(key)["source"] == "default":
-        await _terrain(app, key, lat, lon, background)
+async def resolve_dem(key: str, lat: float, lon: float) -> None:
+    """Orientación por el relieve de una escuela que no la tiene (tools/dem/aspect.py en otro proceso: GDAL y numpy
+    no están en el entorno del proxy)."""
+    if any(r["sector"] == "" and r["source"] == "dem" for r in store.get_aspects(key)):
+        return
+    async with _dem_sem:
+        proc = await asyncio.create_subprocess_exec(
+            DEM_PYTHON, "-I", str(DEM_TOOL), "--crag", key, str(lat), str(lon),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "DATA_DIR": str(store.DATA_DIR)},
+        )  # fmt: skip
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), DEM_TIMEOUT)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise RuntimeError("dem: timeout") from None
+    if proc.returncode:
+        raise RuntimeError(f"dem: {err.decode(errors='replace').strip().splitlines()[-1:]}")
 
 
 async def resolve_osm(app, key: str, lat: float, lon: float) -> None:
@@ -151,20 +179,22 @@ async def resolve_osm(app, key: str, lat: float, lon: float) -> None:
 
 
 async def resolve(app, key: str, lat: float, lon: float) -> None:
-    """Todo seguido (para la página de una escuela): OSM y, si no hay acantilados o Overpass falla, el relieve."""
+    """Todo seguido (para la página de una escuela): OSM y el relieve."""
     try:
         await resolve_osm(app, key, lat, lon)
     finally:
-        await resolve_terrain(app, key, lat, lon)
+        await resolve_dem(key, lat, lon)
 
 
 async def worker(app, source: str) -> None:
     q = _queues[source] = asyncio.Queue()
-    fn = functools.partial(resolve_terrain, background=True) if source == "terrain" else resolve_osm
     while True:
         key, lat, lon = await q.get()
         try:
-            await fn(app, key, lat, lon)
+            if source == "dem":
+                await resolve_dem(key, lat, lon)
+            else:
+                await resolve_osm(app, key, lat, lon)
             log.info("orientación (%s) de %s: %s (%d en cola)", source, key, current(key)["compass"], q.qsize())
         except Exception as e:  # noqa: BLE001 — se reintenta la próxima vez que se pida
             log.warning("orientación (%s) de %s: %s", source, key, e)
