@@ -28,6 +28,12 @@ suelta en `/_proxy/conditions/<cat>/<país>/<escuela>`.
   (IGN) / ~70 % (Copernicus). Es una estimación (las coordenadas de 8a.nu no siempre están en la pared; con 30 m no se
   ven paredes pequeñas) y la página lo dice, y también si el relieve discrepa de OSM/theCrag. Open-Meteo ya solo se
   usa para el tiempo (las filas `terrain` viejas quedan por debajo de `dem`).
+- **Escuelas sin coordenadas en 8a.nu** (`tools/coords`): `list_crags.py` lista las de 8a.nu con ≥10 ascensiones
+  (~25.000; ~14.000 sin coordenadas) y `osm_match.py` las casa por nombre con los sitios de escalada de OSM (teselas de
+  openclimbing.org, porque Overpass no aguanta países enteros), dentro del recuadro de su país y cerca de su zona de
+  8a.nu; guarda en `crag_coords` (fuente, id y nombre en OSM, fecha). Probado con 5.000 escuelas de ubicación
+  conocida: casa ~25 %, el 95 % a <2 km. La página dice de dónde sale la ubicación y enlaza al mapa. Sin orientación
+  conocida se muestra «unknown» (la puntuación supone sur y la barra de sol sale solo como posible).
 - **Sol en la pared**: posición del sol (NOAA) cada 5 min; hay sol si está a más de 3° y por delante de la pared. La
   incertidumbre (±) es la diferencia con la orientación ±15°. No tiene en cuenta el horizonte (montañas).
 - **Puntuación v2** (`app/conditions.py`, ideas de [SendScore](https://www.sendscore.info/thescore)), por horas,

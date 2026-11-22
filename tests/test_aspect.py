@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -66,3 +67,30 @@ print(json.dumps([one["deg"], len(one["faces"]), sorted(f["deg"] for f in two["f
     one, n, two = json.loads(out.stdout)
     assert abs(one - 180) < 10 and n == 1
     assert len(two) == 2 and abs(two[0] - 90) < 10 and abs(two[1] - 270) < 10
+
+
+def test_coordenadas_de_otra_fuente(data_dir):
+    from app import conditions_api as ca
+
+    assert ca._location({"location": {"latitude": 1, "longitude": 2}}, "sportclimbing/x/y")["source"] == "8a"
+    assert ca._location({}, "sportclimbing/x/y") is None
+    store.set_coords("bouldering/x/y", "osm", 42.1, -1.5, {"name": "Y"})
+    loc = ca._location({}, "sportclimbing/x/y")  # la misma escuela en la otra categoría
+    assert (loc["lat"], loc["source"], loc["meta"]["name"]) == (42.1, "osm", "Y")
+    store.set_coords("sportclimbing/x/y", "user", 42.2, -1.6)
+    assert ca._location({}, "sportclimbing/x/y")["source"] == "user"
+
+
+def test_casar_por_nombre_osm():
+    sys.path.insert(0, str(ROOT / "tools" / "coords"))
+    import osm_match as om
+
+    feats = [
+        {"id": "node/1", "lat": 42.0, "lon": -1.0, "name": "Peña Foratata", "kind": "crag", "names": sorted(om.osm_names({"name": "Peña Foratata"}))},
+        {"id": "node/2", "lat": 40.0, "lon": -3.0, "name": "La Cueva", "kind": "crag", "names": sorted(om.osm_names({"name": "La Cueva"}))},
+        {"id": "node/3", "lat": 37.0, "lon": -5.0, "name": "Cueva", "kind": "crag", "names": sorted(om.osm_names({"name": "Cueva"}))},
+    ]
+    m, why = om.match({"name": "Sector Peña Foratata"}, feats)
+    assert why == "ok" and m["osm"] == "node/1"
+    assert om.match({"name": "Cueva"}, feats)[1].startswith("ambiguo")  # dos «cueva» lejos: no se guarda
+    assert om.match({"name": "Otra cosa"}, feats)[0] is None

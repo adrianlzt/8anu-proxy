@@ -35,7 +35,14 @@ CREATE TABLE IF NOT EXISTS topo_route (
 );
 CREATE TABLE IF NOT EXISTS thecrag_cache (key TEXT PRIMARY KEY, at REAL NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS thecrag_img (id TEXT PRIMARY KEY, url TEXT NOT NULL);
+-- Coordenadas de escuelas que 8a.nu no tiene (tools/coords): source osm (casada por nombre), thecrag, user; meta JSON
+-- con de dónde sale (id y nombre en la fuente, parecido del nombre, fecha).
+CREATE TABLE IF NOT EXISTS crag_coords (
+    crag TEXT NOT NULL, source TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL, meta TEXT, updated REAL NOT NULL,
+    PRIMARY KEY (crag, source)
+);
 """
+COORDS_PRIORITY = ("user", "thecrag", "osm")
 # Columnas añadidas después (ver tools/dem/aspect.py): margen de la orientación principal en grados, caras (JSON
 # [{deg, weight, spread, slope}]) y de dónde sale (JSON: modelo de elevación, resolución, método, fecha, confianza).
 MIGRATIONS = {"spread": "REAL", "faces": "TEXT", "meta": "TEXT"}
@@ -69,6 +76,25 @@ def set_aspect(
             (crag, sector, deg % 360, source, slope, time.time(), spread, json.dumps(faces) if faces else None,
              json.dumps(meta) if meta else None),
         )  # fmt: skip
+
+
+def get_coords(crag: str) -> dict | None:
+    """Las mejores coordenadas guardadas de una escuela sin coordenadas en 8a.nu, o None."""
+    with connect() as db:
+        rows = {r["source"]: dict(r) for r in db.execute("SELECT * FROM crag_coords WHERE crag = ?", (crag,))}
+    for source in COORDS_PRIORITY:
+        if source in rows:
+            r = rows[source]
+            return {"lat": r["lat"], "lon": r["lon"], "source": source, "meta": json.loads(r["meta"]) if r["meta"] else None}
+    return None
+
+
+def set_coords(crag: str, source: str, lat: float, lon: float, meta: dict | None = None) -> None:
+    with connect() as db:
+        db.execute(
+            "INSERT OR REPLACE INTO crag_coords (crag, source, lat, lon, meta, updated) VALUES (?, ?, ?, ?, ?, ?)",
+            (crag, source, lat, lon, json.dumps(meta, ensure_ascii=False) if meta else None, time.time()),
+        )
 
 
 def get_webcams(crag: str) -> list[dict]:

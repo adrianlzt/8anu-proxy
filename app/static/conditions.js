@@ -4,7 +4,7 @@
 (function () {
   "use strict";
   const ROUTE = /^\/crags\/([a-z0-9-]+)\/([a-z0-9-]+)\/([a-z0-9-]+)\/conditions\/?$/;
-  const SRC = { user: "set by you", thecrag: "from theCrag", osm: "from OpenStreetMap cliffs", dem: "estimated from an elevation model", terrain: "estimated from terrain", default: "unknown, assumed south" };
+  const SRC = { user: "set by you", thecrag: "from theCrag", osm: "from OpenStreetMap cliffs", dem: "estimated from an elevation model", terrain: "estimated from terrain", default: "unknown" };
   const DEM_NAME = { "ign-mdt05": "IGN 5 m elevation model", "copernicus-glo30": "Copernicus 30 m elevation model", "copernicus-glo90": "Copernicus 90 m elevation model" };
   // De dónde sale la orientación, con lo que haga falta para fiarse de ella: modelo de elevación, otras caras y si el
   // relieve discrepa de lo elegido.
@@ -17,6 +17,15 @@
     } else if (a.source === "terrain" && long) t = `estimated from the terrain (slope ${a.slope}°), may be wrong`;
     if (a.dem && a.dem.diff > 60 && a.source !== "user") t += `; the elevation model says ${a.dem.compass}`;
     return t;
+  }
+  // 8a.nu no tiene coordenadas de la escuela: de dónde las hemos sacado (puede ser otro sitio con el mismo nombre).
+  function locNote(d) {
+    const l = d.location;
+    if (!l || l.source === "8a") return "";
+    const m = l.meta || {};
+    const where = `<a href="https://www.openstreetmap.org/?mlat=${l.lat}&mlon=${l.lon}#map=15/${l.lat}/${l.lon}" target="_blank" rel="noopener noreferrer">${l.lat.toFixed(4)}, ${l.lon.toFixed(4)}</a>`;
+    const from = l.source === "osm" ? `OpenStreetMap («${esc(m.name || "")}», matched by name)` : l.source === "thecrag" ? "theCrag" : "you";
+    return `<div class="nuc-sub">⚠ 8a.nu has no location for this crag: using ${where} from ${from}; it may be wrong.</div>`;
   }
   function COMPASS16(deg) {
     return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][Math.round((deg % 360) / 22.5) % 16];
@@ -222,7 +231,7 @@
     }).join("");
     return `<section class="nuc-card"><div class="nuc-pad"><h2>${state.mode === "past" ? "Past 5 days" : "Next 7 days"}</h2>
       ${seg("mode", [["past", "Past 5 days"], ["next", "Next 7 days"]], state.mode)}</div>
-      <div class="nuc-sub">Weather for ${esc(d.crag.area || d.crag.name)}, forecast from ${esc(d.fetched || "")} · tap a day for its conditions</div>
+      <div class="nuc-sub">Weather for ${esc(d.crag.area || d.crag.name)}, forecast from ${esc(d.fetched || "")} · tap a day for its conditions</div>${locNote(d)}
       <div class="nuc-days">${cards}</div>
       <button type="button" class="nuc-hourly-toggle" data-hourly="1"><span>HOURLY WEATHER</span><span>Next 48 hours</span><span>${state.hourly ? "▴" : "▾"}</span></button>
       ${state.hourly ? hourlyTable(d) : ""}</section>`;
@@ -363,11 +372,13 @@
     const mapped = d.crag.sectors.filter((z) => z.aspect != null);
     const sect = mapped.map((z) => `<div class="nuc-sector"><div class="nuc-row"><b>${esc(z.name)}</b><small>faces ${esc(z.compass)} (${Math.round(z.aspect)}°)${z.aspect_src === "thecrag" ? " · theCrag" : ""}</small></div>
       ${sunBar(z.sun[x.date])}<div>${sunText(z.sun[x.date])}</div></div>`).join("");
-    const lead = s.sun.length ? `${esc(d.crag.name)} gets sun from ${fmtMin(s.sun[0][0])} until ${fmtMin(s.sun[s.sun.length - 1][1])}.` : `${esc(d.crag.name)} gets no direct sun.`;
+    const unknown = a.source === "default";
+    const lead = unknown ? "We don't know which way the wall faces yet. The bar shows, as possible, the sun a south-facing wall would get." : s.sun.length ? `${esc(d.crag.name)} gets sun from ${fmtMin(s.sun[0][0])} until ${fmtMin(s.sun[s.sun.length - 1][1])}.` : `${esc(d.crag.name)} gets no direct sun.`;
+    const shown = unknown ? { ...s, sun: [], possible: s.sun } : s;
     return `<section class="nuc-card"><div class="nuc-pad nuc-row"><h2>Sun on the wall</h2><small>${dayLabel(x, state.sel)}, ${shortDate(x.date)}</small></div>
       <div class="nuc-pad"><p>${lead}</p>
-      <div class="nuc-row"><b>${esc(d.crag.name)}</b><small>Wall ${esc(aspectSrc(a, false))} · faces ${esc(a.compass)} (${Math.round(a.deg)}°)</small></div>
-      ${sunBar(s)}<div class="nuc-suntext">${sunText(s)}</div><hr>
+      <div class="nuc-row"><b>${esc(d.crag.name)}</b><small>${unknown ? "Wall orientation unknown" : `Wall ${esc(aspectSrc(a, false))} · faces ${esc(a.compass)} (${Math.round(a.deg)}°)`}</small></div>
+      ${sunBar(shown)}<div class="nuc-suntext">${unknown ? "Unknown" : sunText(s)}</div><hr>
       <div class="nuc-muted">${d.crag.sectors.length} sectors</div>
       ${mapped.length ? sect : `<div class="nuc-muted">Same as the crag: no wall data of their own yet</div>`}
       <a href="#" class="nuc-link" data-know="1">Tell us when they get sun</a>
@@ -394,7 +405,7 @@
       <div><h3>Rock</h3><b class="${rcls}">${esc(w.rock.state)}</b><p>${w.rock.rh_now} % humidity now, ${w.rock.rh_6h} % over 6 h.</p></div>
       <div><h3>Sun</h3><b>${esc(w.sun.state)}</b><p>${w.sun.clear_hours} clear daylight hours.</p></div>
       <div><h3>Since the last rain</h3><b>${esc(w.rain.state)}</b><p>${w.rain.mm_3d} mm over the last 3 days.</p></div>
-      </div><div class="nuc-pad"><p class="nuc-warn">⚠ Wall faces ${esc(a.compass)} (${Math.round(a.deg)}°), ${src}; ${mapped} of ${d.crag.sectors.length} sectors mapped${d.crag.rain_safe ? "; marked as climbable in the rain on 8a.nu" : ""}. Unmapped sectors may be shadier, wetter or windier.</p>
+      </div><div class="nuc-pad"><p class="nuc-warn">⚠ ${a.source === "default" ? "Wall orientation unknown (the score assumes south)" : `Wall faces ${esc(a.compass)} (${Math.round(a.deg)}°), ${src}`}; ${mapped} of ${d.crag.sectors.length} sectors mapped${d.crag.rain_safe ? "; marked as climbable in the rain on 8a.nu" : ""}. Unmapped sectors may be shadier, wetter or windier.</p>
       <p class="nuc-muted">Model v2: rock temperature with thermal inertia, dew point and condensation, rain and drying for ${esc(d.crag.rock)}${d.crag.rock_known ? "" : " (assumed)"}${d.crag.rain_safe ? " in a sheltered crag" : ""}, wind at the wall from its direction, rain chance; not fitted to ascents yet · forecast Open-Meteo, fetched ${esc(d.fetched || "")}</p></div></section>`;
   }
 
@@ -431,7 +442,7 @@
       `<option value="${v}" ${cur != null && Math.round(cur) === v ? "selected" : ""}>${k} (${v}°)</option>`).join("")}</select>`;
     const sectors = d.crag.sectors.map((z) => `<label>${esc(z.name)} ${sel("s:" + z.slug, z.aspect)}</label>`).join("");
     return `<section class="nuc-card" id="nuc-know"><div class="nuc-pad"><h2>Know this crag?</h2></div><form class="nuc-pad nuc-form" data-form="crag">
-      <p>Which way does the main wall face? Now: ${esc(a.compass)} (${Math.round(a.deg)}°), ${SRC[a.source] || a.source}.</p>
+      <p>Which way does the main wall face? Now: ${a.source === "default" ? "unknown" : `${esc(a.compass)} (${Math.round(a.deg)}°), ${esc(aspectSrc(a, false))}`}.</p>
       <label>Main wall ${sel("crag", a.source === "user" ? a.deg : null)} <span>or degrees <input name="deg" type="number" min="0" max="359" placeholder="${Math.round(a.deg)}"></span></label>
       <p class="nuc-muted">Sectors (only if they differ from the main wall):</p>${sectors}
       <div class="nuc-actions"><button type="button" data-cancel="crag">Cancel</button><button type="submit" class="primary">Save</button></div></form></section>`;

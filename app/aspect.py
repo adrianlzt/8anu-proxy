@@ -10,7 +10,8 @@ ninguna pisa a otra: se elige al leer):
    Copernicus GLO-30 en el resto), con varias caras si las hay y de dónde sale (modelo, resolución, método, fecha).
    Se calcula de una pasada para todas las escuelas del mapa; las que falten, con el mismo script, una a una;
 5. «terrain»: lo que se calculó antes con las elevaciones de Open-Meteo (ya no se pide; queda por si no hay DEM);
-6. si nada de eso se ha podido calcular todavía, sur, marcado como supuesto.
+6. si nada de eso se ha podido calcular todavía, desconocida («?»; para la puntuación se supone sur, y la página
+   enseña ese sol solo como posible).
 
 Los acantilados se piden a Overpass por cuadrículas de TILE grados (una petición sirve para todas las escuelas de la
 zona) y se guardan en disco. Overpass limita peticiones: un solo trabajador en segundo plano las va haciendo despacio.
@@ -71,7 +72,7 @@ def current(key: str) -> dict:
                 diff = abs((dem["deg"] - r["deg"] + 180) % 360 - 180)
                 out["dem"] = {"deg": dem["deg"], "compass": cond.compass(dem["deg"]), "diff": round(diff)}
             return out
-    return {"deg": 180.0, "source": "default", "compass": "S?", "slope": 0, "sectors": sectors, "sector_src": sector_src,
+    return {"deg": 180.0, "source": "default", "compass": "?", "slope": 0, "sectors": sectors, "sector_src": sector_src,
             "spread": None, "faces": [], "meta": None}  # fmt: skip
 
 

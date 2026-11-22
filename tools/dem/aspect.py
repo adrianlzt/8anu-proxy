@@ -1,6 +1,6 @@
 """Orientación de las escuelas con modelos digitales de elevación (fuente «dem» en la tabla aspect).
 
-    /usr/bin/python3 -I tools/dem/aspect.py --all                   # todas las escuelas del mapa sin «dem» todavía
+    /usr/bin/python3 -I tools/dem/aspect.py --all                   # las del mapa (y de crag_coords) sin «dem»
     /usr/bin/python3 -I tools/dem/aspect.py --all --force           # recalcularlas todas
     /usr/bin/python3 -I tools/dem/aspect.py --crag <clave> <lat> <lon> [--dry-run]   # una (lo usa el proxy)
 
@@ -233,6 +233,11 @@ def done_keys() -> set[str]:
 
 def run_all(force: bool, workers: int, limit: int | None, dry: bool) -> None:
     crags = json.loads(CACHE.read_text())
+    # Y las que 8a.nu no sitúa pero tienen coordenadas de otra fuente (tools/coords)
+    in_map = {c["key"] for c in crags}
+    with store.connect() as db:
+        extra = db.execute("SELECT crag, lat, lon FROM crag_coords ORDER BY updated").fetchall()
+    crags += [{"key": r["crag"], "lat": r["lat"], "lon": r["lon"]} for r in extra if r["crag"] not in in_map]
     skip = set() if force else done_keys()
     todo = [c for c in crags if c["key"] not in skip][:limit]
     # Por tesela de 1°: cada hilo abre la suya y los bloques que comparten escuelas vecinas se bajan una vez

@@ -108,6 +108,16 @@ async def _weather(app, lat: float, lon: float) -> dict:
     return w
 
 
+def _location(crag: dict, key: str) -> dict | None:
+    """Coordenadas de la escuela: las de 8a.nu o, si no tiene, las guardadas de otra fuente (tools/coords; también las
+    de la misma escuela en la otra categoría). Con `source` si no son de 8a.nu."""
+    if crag.get("location"):
+        return {"lat": crag["location"]["latitude"], "lon": crag["location"]["longitude"], "source": "8a"}
+    cat, rest = key.split("/", 1)
+    other = ("bouldering" if cat == "sportclimbing" else "sportclimbing") + "/" + rest
+    return store.get_coords(key) or store.get_coords(other)
+
+
 async def _aspect(app, key: str, lat: float, lon: float) -> dict:
     """Orientación (ver app/aspect.py). La primera vez que se abre una escuela que no está en la pasada del DEM: el
     relieve enseguida (~1 s, sin red de cupos) y los acantilados de OSM como mucho OSM_WAIT s; si Overpass tarda más,
@@ -159,9 +169,11 @@ async def conditions_json(request: Request) -> Response:
             return JSONResponse({"error": str(e)}, status_code=404)
         except Exception as e:  # noqa: BLE001 — que la web vea el motivo y no un «Internal Server Error» en texto
             return JSONResponse({"error": f"couldn't read the crag from 8a.nu: {e}"}, status_code=502)
-        if not crag.get("location"):
+        loc = _location(crag, key)
+        if not loc:
             return JSONResponse({"error": "8a.nu has no coordinates for this crag"}, status_code=404)
-        lat, lon = crag["location"]["latitude"], crag["location"]["longitude"]
+        lat, lon = loc["lat"], loc["lon"]
+        crag = {**crag, "location": {"latitude": lat, "longitude": lon}}
         # El tiempo no espera a la orientación ni cae con ella (_aspect se arregla con lo que haya).
         weather, aspect = await asyncio.gather(_weather(request.app, lat, lon), _aspect(request.app, key, lat, lon), return_exceptions=True)
         if isinstance(aspect, BaseException):
@@ -181,6 +193,7 @@ async def conditions_json(request: Request) -> Response:
                 d["date"]: cond.wall_sun(datetime.fromisoformat(d["date"]), off, lat, lon, deg) for d in data["days"]
             }
     data["webcams"] = store.get_webcams(key)
+    data["location"] = loc
     return JSONResponse(data, headers={"cache-control": "no-store"})
 
 
@@ -191,9 +204,10 @@ async def meteo_json(request: Request) -> Response:
         return JSONResponse({"error": "bad crag"}, status_code=400)
     try:
         crag, _, _ = await _crag(request.app, key)
-        if not crag.get("location"):
+        loc = _location(crag, key)
+        if not loc:
             return JSONResponse({"error": "8a.nu has no coordinates for this crag"}, status_code=404)
-        lat, lon = crag["location"]["latitude"], crag["location"]["longitude"]
+        lat, lon = loc["lat"], loc["lon"]
         data = await meteo.detail(request.app, key, lat, lon)
     except (LookupError, RuntimeError) as e:
         return JSONResponse({"error": str(e)}, status_code=502)
