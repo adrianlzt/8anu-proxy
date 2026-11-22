@@ -51,7 +51,7 @@
     ".nut-access a.map{display:inline-block;margin:2px 10px 2px 0;color:#2a6fdb}" +
     ".nut-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 8px}.nut-tools button,.nut-ed button{border:1px solid #bbb;background:#fff;border-radius:4px;padding:4px 10px;font-size:13px;cursor:pointer}.nut-ed button{min-height:38px;padding:6px 14px;font-size:14px;border-radius:6px}" +
     ".nut-tools button.primary,.nut-ed button.primary{background:#8b1d8b;border-color:#8b1d8b;color:#fff}.nut-ed button.danger{color:#c00}" +
-    ".nut-form{background:#fff;border:1px solid #ddd;border-radius:8px;padding:10px;margin:0 0 10px;font-size:13px}.nut-form label{display:block;margin:4px 0}.nut-form .q{margin:10px 0 2px;font-weight:600}.nut-form label.opt{display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid #ddd;border-radius:6px;margin:4px 0;line-height:1.35}.nut-form label.opt input{margin-top:3px;flex:none;width:18px;height:18px}.nut-form label.opt small{color:#666}" +
+    ".nut-form{background:#fff;border:1px solid #ddd;border-radius:8px;padding:10px;margin:0 0 10px;font-size:13px}.nut-form label{display:block;margin:4px 0}.nut-form .q{margin:10px 0 2px;font-weight:600}.nut-form .pick{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0}.nut-form .pick label{display:inline-flex;align-items:center;gap:6px;min-height:42px;padding:8px 16px;border:1px solid #8b1d8b;color:#8b1d8b;background:#fff;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer;margin:0}.nut-form .pick input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}.nut-form .chosen{display:flex;gap:8px;align-items:center;font-size:13px;color:#444;margin:4px 0}.nut-form .chosen img{width:64px;height:64px;object-fit:cover;border-radius:4px;border:1px solid #ddd}.nut-form label.opt{display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid #ddd;border-radius:6px;margin:4px 0;line-height:1.35}.nut-form label.opt input{margin-top:3px;flex:none;width:18px;height:18px}.nut-form label.opt small{color:#666}" +
     ".nut-form .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}.nut-form .row button{min-height:42px;padding:8px 22px;font-size:15px;font-weight:600;border:1px solid #bbb;background:#fff;color:#333;border-radius:6px;cursor:pointer}.nut-form .row button.primary{background:#8b1d8b;border-color:#8b1d8b;color:#fff}.nut-form .row button:disabled{opacity:.5}.nut-form .row .hint{flex-basis:100%;font-size:13px;color:#555}.nut-form input[type=text],.nut-form select{width:100%;box-sizing:border-box;padding:5px;font-size:14px}" +
     ".nut-ed{background:#fff;padding:8px 10px;font-size:13px;border-top:1px solid #eee}.nut-ed .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0}" +
     ".nut-ed input{padding:4px;font-size:13px}.nut-ed input.num{width:44px}.nut-ed input.nm{flex:1;min-width:120px}.nut-ed input.g{width:56px}" +
@@ -440,9 +440,18 @@
   // La foto antes de subirla: girada según el EXIF y reducida a 3000 px de lado como mucho, en JPEG (las del móvil
   // pesan 5–15 MB). Si el navegador no puede decodificarla, el fichero tal cual (leído antes, para que un fallo al leer
   // se distinga de uno de red).
+  // Firefox con resistFingerprinting (o Brave) devuelve ruido al leer un canvas: entonces la foto se sube tal cual.
+  function canvasHonest() {
+    try {
+      var c = document.createElement("canvas"); c.width = c.height = 4;
+      var g = c.getContext("2d"); g.fillStyle = "#ff0000"; g.fillRect(0, 0, 2, 4); g.fillStyle = "#0000ff"; g.fillRect(2, 0, 2, 4);
+      var a = g.getImageData(0, 0, 4, 4).data;
+      return a[0] === 255 && a[1] === 0 && a[2] === 0 && a[60] === 0 && a[62] === 255;
+    } catch (e) { return false; }
+  }
   function shrinkPhoto(f) {
     var MAX = 3000;
-    var decode = window.createImageBitmap ? createImageBitmap(f, { imageOrientation: "from-image" }) : Promise.reject(new Error("no createImageBitmap"));
+    var decode = window.createImageBitmap && canvasHonest() ? createImageBitmap(f, { imageOrientation: "from-image" }) : Promise.reject(new Error("no createImageBitmap"));
     return decode.then(function (bm) {
       var k = Math.min(1, MAX / Math.max(bm.width, bm.height));
       var c = document.createElement("canvas");
@@ -463,7 +472,22 @@
     btn.addEventListener("click", function () {
       if (container.querySelector(".nut-form")) return;
       var form = el("div", { class: "nut-form" });
-      var file = el("input", { type: "file", accept: "image/*" });
+      // Dos botones: cámara (capture) y galería/ficheros; el input nativo queda oculto. picked: la última elegida.
+      var picked = null;
+      var cam = el("input", { type: "file", accept: "image/*", capture: "environment" });
+      var gal = el("input", { type: "file", accept: "image/*" });
+      var chosen = el("div", { class: "chosen" });
+      [cam, gal].forEach(function (inp) {
+        inp.addEventListener("change", function () {
+          if (!inp.files || !inp.files[0]) return;
+          picked = inp.files[0];
+          chosen.textContent = "";
+          var th = el("img", { alt: "" });
+          th.src = URL.createObjectURL(picked);
+          chosen.appendChild(th);
+          chosen.appendChild(el("span", { text: picked.name + " · " + (picked.size / 1048576).toFixed(1) + " MB" }));
+        });
+      });
       var heading = el("input", { type: "text", placeholder: "title (e.g. guidebook page, sector)" });
       var sector = el("select");
       sector.appendChild(el("option", { value: "", text: "— sector —" }));
@@ -474,7 +498,9 @@
       var go = el("button", { type: "button", class: "primary", text: "Upload" });
       var cancel = el("button", { type: "button", text: "Cancel" });
       var msg = el("span", { class: "hint" });
-      form.appendChild(el("label", { text: "Photo: " }, [file]));
+      form.appendChild(el("div", { class: "q", text: "Photo" }));
+      form.appendChild(el("div", { class: "pick" }, [el("label", {}, [cam, document.createTextNode("📷 Take photo")]), el("label", {}, [gal, document.createTextNode("🖼 Choose image")])]));
+      form.appendChild(chosen);
       form.appendChild(el("label", { text: "Title: " }, [heading]));
       form.appendChild(el("label", { text: "Sector: " }, [sector]));
       form.appendChild(el("div", { class: "q", text: "Does the photo already show the route lines?" }));
@@ -484,7 +510,7 @@
       tools.after(form);
       cancel.addEventListener("click", function () { form.remove(); });
       go.addEventListener("click", function () {
-        var f = file.files && file.files[0];
+        var f = picked;
         if (!f) { msg.textContent = "Pick a photo first."; return; }
         go.disabled = true; msg.textContent = "Preparing the photo…";
         var sName = sector.selectedOptions[0] ? sector.selectedOptions[0].textContent : "";
