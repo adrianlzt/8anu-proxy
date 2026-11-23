@@ -15,6 +15,10 @@ Por cada escuela busca su zona en theCrag (buscador, la más cercana con nombre 
 {"crag": key, "url": …, "nodes": [{"id", "name", "depth", "aspect": {"N": 1, …}, "inherited": 0|1}, …]}.
 Una página cada PAUSE segundos; si theCrag contesta 403/429 o con un reto, para del todo (no reintenta).
 Las escuelas que ya tienen fichero se saltan: se puede relanzar.
+
+Con --coords (escuelas que 8a.nu no sitúa) solo busca la zona y lee sus coordenadas (meta place:location), 2 páginas
+por escuela: salida/<slug>.json = {"crag", "url", "name", "sim", "lat", "lon"} (lat/lon None si theCrag no la sitúa).
+Lo pasa a la base tools/thecrag/import_coords.py.
 """
 
 import asyncio
@@ -91,7 +95,7 @@ async def fetch(pg, url: str) -> str:
     raise Blocked(url)
 
 
-async def find_area(pg, crag: dict) -> str | None:
+async def find_area(pg, crag: dict, with_sim: bool = False):
     html = await fetch(pg, f"{BASE}/en/climbing/world/search?only=areas&S={crag['name'].split('/')[0].split(',')[0].strip()}")
     best = None
         # Tarjetas de resultados: <a class="card card-crag…" href="/en/climbing/spain/…"> … node-summary__name <b>Nombre</b>
@@ -102,7 +106,14 @@ async def find_area(pg, crag: dict) -> str | None:
         sim = max(difflib.SequenceMatcher(None, norm(label), norm(x)).ratio() for x in parts if norm(x))
         if sim >= 0.6 and (best is None or sim > best[0] or (sim == best[0] and href.count("/") < best[1].count("/"))):
             best = (sim, href)
+    if with_sim:
+        return (BASE + best[1], round(best[0], 2)) if best else (None, None)
     return BASE + best[1] if best else None
+
+
+def location(html: str) -> tuple[float | None, float | None]:
+    ll = [re.search(rf'property="place:location:{k}" content="(-?[\d.]+)"', html) for k in ("latitude", "longitude")]
+    return tuple(float(m.group(1)) if m else None for m in ll)
 
 
 def matches(label: str, sectors: list[str]) -> bool:
@@ -169,6 +180,9 @@ async def main() -> None:
     global SECTORS
     argv = sys.argv[1:]
     opt = {}
+    coords = "--coords" in argv
+    if coords:
+        argv.remove("--coords")
     for k in ("--cuenta", "--paginas"):
         if k in argv:
             i = argv.index(k)
@@ -201,6 +215,27 @@ async def main() -> None:
                 if dest.exists():
                     continue
                 st = json.load(open(part)) if part.exists() else {"area": None, "nodes": [], "state": None, "searched": False}
+                if coords:
+                    try:
+                        if not st["searched"]:
+                            st["area"], st["sim"] = await find_area(pg, c, with_sim=True)
+                            st["searched"] = True
+                        lat = lon = name = None
+                        if st["area"]:
+                            html = await fetch(pg, st["area"])
+                            lat, lon = location(html)
+                            name = parse(html)["name"]
+                    except (Quota, Blocked) as e:
+                        part.write_text(json.dumps(st, ensure_ascii=False))
+                        status["motivo"] = f"{type(e).__name__}: {e}"
+                        print(f"{c['key']}: paro ({e})", flush=True)
+                        break
+                    dest.write_text(json.dumps({"crag": c["key"], "url": st["area"], "name": name, "sim": st.get("sim"),
+                                                "lat": lat, "lon": lon}, ensure_ascii=False))
+                    part.unlink(missing_ok=True)
+                    status["hechas"].append(c["key"])
+                    print(f"{c['key']}: {st['area']} «{name}» {lat}, {lon}", flush=True)
+                    continue
                 try:
                     if not st["searched"]:
                         st["area"] = await find_area(pg, c)
