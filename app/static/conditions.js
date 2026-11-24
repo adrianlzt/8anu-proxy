@@ -625,16 +625,19 @@
     const ckey = key + "|" + (new URLSearchParams(location.search).get("sector") || (location.pathname.match(/\/sectors\/([a-z0-9-]+)/) || [])[1] || "");
     if (card && card.isConnected && card.dataset.key === ckey) return;
     if (card) card.remove();
+    // En el móvil, debajo de la cabecera de la escuela; en el PC esa cabecera está oculta (el nombre va en la columna
+    // izquierda) y la tarjeta va arriba de la columna central, encima de la lista de vías.
     const hdr = Array.from(document.querySelectorAll(".crag-mobile-header, .crag-header")).find((h) => h.offsetWidth > 0);
-    if (!hdr) return;
-    const after = (state.root && state.root.isConnected && state.root.parentElement === hdr.parentElement) ? state.root : hdr;
+    const col = !hdr && Array.from(document.querySelectorAll(".crags-column-center")).find((c) => c.offsetWidth > 0);
+    if (!hdr && !col) return;
     card = document.createElement("section");
     card.id = "nuc-topos";
     card.className = "nuc nuc-topos";
     card.dataset.key = ckey;
     const open = localStorage.getItem(TOPOS_OPEN) === "1";
     card.innerHTML = `<div class="nuc-card"><button type="button" class="nuc-pad nuc-row mg-toggle" data-topos="1"><h2>Topos</h2><span>${open ? "▴" : TOPOS_HINT}</span></button><div class="nuc-topos-body nuc-pad" ${open ? "" : "hidden"}></div></div>`;
-    after.after(card);
+    if (hdr) ((state.root && state.root.isConnected && state.root.parentElement === hdr.parentElement) ? state.root : hdr).after(card);
+    else col.insertBefore(card, col.firstChild);
     card.querySelector("[data-topos]").addEventListener("click", () => {
       const now = localStorage.getItem(TOPOS_OPEN) !== "1";
       localStorage.setItem(TOPOS_OPEN, now ? "1" : "0");
