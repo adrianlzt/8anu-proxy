@@ -5,7 +5,7 @@
 
 La zona de theCrag se casó solo por nombre, así que puede ser otro sitio que se llame igual. Se guarda si cae a menos
 de AREA_KM de alguna escuela de 8a.nu de la misma zona («area» del mapa, map-crags.json) o, si la zona no tiene
-ninguna situada, dentro de España.
+ninguna situada, dentro de España y con el nombre casi igual (SIM_SOLO): por nombre suelto salían escuelas que no eran.
 """
 
 import json
@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from app import store  # noqa: E402
 
 AREA_KM = 30
+SIM_SOLO = 0.85  # parecido mínimo del nombre cuando no hay zona con la que comprobar
 SPAIN = (27.5, 44.0, -18.5, 4.5)  # lat, lat, lon, lon (con Canarias y Baleares)
 
 
@@ -46,8 +47,8 @@ def main() -> None:
         c = info.get(d["crag"], {})
         pts = areas.get((c.get("country"), c.get("area")), [])
         near = min((km(p, q) for q in pts), default=None)
-        good = near <= AREA_KM if near is not None else SPAIN[0] <= p[0] <= SPAIN[1] and SPAIN[2] <= p[1] <= SPAIN[3]
-        why = f"{near:.0f} km de su zona «{c.get('area')}»" if near is not None else "sin zona situada, dentro de España" if good else "fuera de España"
+        good = near <= AREA_KM if near is not None else SPAIN[0] <= p[0] <= SPAIN[1] and SPAIN[2] <= p[1] <= SPAIN[3] and (d.get("sim") or 0) >= SIM_SOLO
+        why = f"{near:.0f} km de su zona «{c.get('area')}»" if near is not None else "sin zona situada, dentro de España" if good else "sin zona situada, fuera de España o nombre poco parecido"
         print(f"{'OK ' if good else 'NO '} {d['crag']}: «{d['name']}» {p[0]:.4f}, {p[1]:.4f} ({why}, nombre {d.get('sim')})")
         if not good:
             bad += 1
