@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from app import store  # noqa: E402
 
 AREA_KM = 30
+MALAS = {"sportclimbing/spain/turre-escondite"}  # mirado a mano: theCrag da otro sitio (Turre está en Almería)
 SIM_SOLO = 0.85  # parecido mínimo del nombre cuando no hay zona con la que comprobar
 SPAIN = (27.5, 44.0, -18.5, 4.5)  # lat, lat, lon, lon (con Canarias y Baleares)
 
@@ -50,6 +51,8 @@ def main() -> None:
         good = near <= AREA_KM if near is not None else SPAIN[0] <= p[0] <= SPAIN[1] and SPAIN[2] <= p[1] <= SPAIN[3] and (d.get("sim") or 0) >= SIM_SOLO
         why = f"{near:.0f} km de su zona «{c.get('area')}»" if near is not None else "sin zona situada, dentro de España" if good else "sin zona situada, fuera de España o nombre poco parecido"
         print(f"{'OK ' if good else 'NO '} {d['crag']}: «{d['name']}» {p[0]:.4f}, {p[1]:.4f} ({why}, nombre {d.get('sim')})")
+        if d["crag"] in MALAS:
+            good = False
         if not good:
             bad += 1
             continue
